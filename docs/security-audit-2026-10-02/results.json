@@ -1,0 +1,213 @@
+{
+    "runtime": {
+        "php": "8.3.14",
+        "php_tz": "UTC",
+        "php_now": "2026-10-02 12:38:29",
+        "sql_time": {
+            "db_now": "2026-10-02 10:38:29",
+            "db_tz": "UTC"
+        },
+        "temporary_only": true,
+        "native_db_abstraction": "DB"
+    },
+    "email_array_mass_update": {
+        "accepted": true,
+        "after": [
+            {
+                "id": 1,
+                "email": "one@audit.invalid",
+                "email_try": 1,
+                "blocked": null
+            },
+            {
+                "id": 2,
+                "email": "two@audit.invalid",
+                "email_try": 1,
+                "blocked": null
+            }
+        ]
+    },
+    "email_array_collective_lock": [
+        {
+            "id": 1,
+            "email": "one@audit.invalid",
+            "email_try": 3,
+            "blocked": "2026-10-02 12:43:29"
+        },
+        {
+            "id": 2,
+            "email": "two@audit.invalid",
+            "email_try": 3,
+            "blocked": "2026-10-02 12:43:29"
+        }
+    ],
+    "email_array_clears_other_block": [
+        {
+            "id": 3,
+            "email": "first@audit.invalid",
+            "email_try": 1,
+            "blocked": null
+        },
+        {
+            "id": 4,
+            "email": "blocked@audit.invalid",
+            "email_try": 1,
+            "blocked": null
+        }
+    ],
+    "reset_account_dos_without_ip_budget": {
+        "fourth_allowed": false,
+        "emails": [
+            {
+                "id": 5,
+                "email": "victim@audit.invalid",
+                "email_try": 3,
+                "blocked": "2026-10-02 12:43:29"
+            }
+        ],
+        "ips": []
+    },
+    "reset_threshold_no_expiry": {
+        "allowed": false,
+        "after": [
+            {
+                "id": 6,
+                "email": "orphan@audit.invalid",
+                "email_try": 3,
+                "blocked": null
+            }
+        ]
+    },
+    "login_budget_interleaving": {
+        "threshold": 3,
+        "admitted": 12,
+        "after": [
+            {
+                "id": 1,
+                "login": "parallel@audit.invalid",
+                "login_try": 12,
+                "blocked": "2026-10-03 12:38:29",
+                "last_try": "2026-10-02 10:38:29"
+            }
+        ],
+        "note": "deterministic interleaving, not HTTP load"
+    },
+    "success_keeps_other_ip_counters": [
+        {
+            "id": 13,
+            "login": "first@audit.invalid",
+            "ip": "192.0.2.42",
+            "ip_try": 0,
+            "blocked": null,
+            "last_try": null
+        },
+        {
+            "id": 14,
+            "login": "second@audit.invalid",
+            "ip": "192.0.2.42",
+            "ip_try": 1,
+            "blocked": null,
+            "last_try": "2026-10-02 10:38:29"
+        }
+    ],
+    "login_threshold_reconciled": {
+        "allowed": false,
+        "after": [
+            {
+                "id": 18,
+                "login": "reconcile@audit.invalid",
+                "login_try": 6,
+                "blocked": "2026-10-02 12:43:29",
+                "last_try": null
+            }
+        ]
+    },
+    "backoff_after_expiry": {
+        "allowed_after_expiry": true,
+        "after": [
+            {
+                "id": 19,
+                "login": "backoff@audit.invalid",
+                "login_try": 7,
+                "blocked": "2026-10-02 12:48:29",
+                "last_try": "2026-10-02 10:38:29"
+            }
+        ]
+    },
+    "distributed_without_account_threshold": {
+        "distinct_ips": 2,
+        "allowed": true,
+        "after": [
+            {
+                "id": 21,
+                "login": "distributed@audit.invalid",
+                "login_try": 2,
+                "blocked": null,
+                "last_try": "2026-10-02 10:38:29"
+            }
+        ]
+    },
+    "distributed_long_lock": [
+        {
+            "id": 21,
+            "login": "distributed@audit.invalid",
+            "login_try": 3,
+            "blocked": "2037-12-31 23:59:59",
+            "last_try": "2026-10-02 10:38:29"
+        }
+    ],
+    "zero_duration_login_allowed": {
+        "allowed": true
+    },
+    "login_scalar_sql_literal": [
+        {
+            "id": 27,
+            "login": "audit' OR '1'='1",
+            "login_try": 0,
+            "blocked": null,
+            "last_try": null
+        }
+    ],
+    "whitelist_regressions": {
+        "ipv6_canonical": "2001:db8::1",
+        "bad_ipv4_rejected": true,
+        "bad_cidr_rejected": true,
+        "cidr_inside": true,
+        "cidr_outside": false,
+        "cross_family_rejected": true,
+        "rightname": "config"
+    },
+    "config_clamping_regressions": {
+        "negative": 0,
+        "huge": 100,
+        "array_fallback": 6,
+        "text_fallback": 6,
+        "duration_cap": 31536000,
+        "zero_duration": 0
+    },
+    "mixed_time_window_observation": {
+        "sql_age_hours": 11,
+        "configured_window_hours": 12,
+        "counted_attempts": 0
+    },
+    "assertions": {
+        "array_updates_all_emails": true,
+        "array_blocks_all_emails": true,
+        "array_clears_other_block": true,
+        "reset_ignores_ip_budget": true,
+        "reset_orphan_never_reconciled": true,
+        "inflight_checks_exceed_budget": true,
+        "other_account_ip_preserved": true,
+        "login_orphan_reconciled": true,
+        "backoff_increments_after_expiry": true,
+        "distributed_inactive_without_account_limit": true,
+        "distributed_lock_until_2037": true,
+        "zero_duration_ineffective": true,
+        "scalar_sql_payload_stays_literal": true,
+        "whitelist_requires_config": true,
+        "invalid_cidr_rejected": true,
+        "cidr_inside_matches": true,
+        "cidr_outside_does_not_match": true,
+        "config_array_fallback": true
+    }
+}

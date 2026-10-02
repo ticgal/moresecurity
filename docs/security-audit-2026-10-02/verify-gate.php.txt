@@ -1,0 +1,40 @@
+<?php
+// Only the session condition is synthetic; hook functions and Session are real.
+if (PHP_SAPI !== 'cli') {
+    exit(1);
+}
+require '/var/www/html/glpi/vendor/autoload.php';
+class Auth {
+    public function login(...$arguments) {
+        throw new RuntimeException('audit_reached_auth_without_csrf');
+    }
+}
+class PluginMoresecurityWhitelist {
+    public static function isWhitelisted(string $ip): bool { return false; }
+}
+class PluginMoresecurityLoginip {
+    public static function checkIp(string $ip): bool { return true; }
+}
+class PluginMoresecurityLogin {
+    public static function checkLogin($login): bool { return true; }
+}
+require GLPI_ROOT . '/plugins/moresecurity/hook.php';
+$CFG_GLPI = ['root_doc' => '', 'login_remember_time' => 0];
+$_SERVER = ['REQUEST_METHOD' => 'POST', 'SCRIPT_NAME' => '/index.php', 'REMOTE_ADDR' => '192.0.2.42'];
+$_GET = $_REQUEST = [];
+$_POST = ['login_name' => ' audit ', 'login_password' => 'synthetic'];
+$_SESSION = ['glpiID' => 999999, 'glpicookietest' => 'testcookie'];
+plugin_moresecurity_enforce_login_gate();
+echo "authenticated_session_skips_gate=true\n";
+$_SESSION = ['glpicookietest' => 'testcookie'];
+try {
+    plugin_moresecurity_enforce_login_gate();
+} catch (RuntimeException $e) {
+    echo $e->getMessage() . "\n";
+}
+$_POST['login_name'] = ['LIKE', '%'];
+try {
+    plugin_moresecurity_process_login();
+} catch (TypeError $e) {
+    echo "login_name_array_TypeError_before_auth=true\n";
+}
