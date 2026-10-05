@@ -33,6 +33,8 @@
 {% if options is not defined %}
 {% set options = {} %}
 {% endif %}
+{# buttons.html.twig reads `params` directly: define it for strict-variables environments #}
+{% set params = params|default({}) %}
 
 {{ include('components/form/header.html.twig', {'in_twig': true, 'no_header': true}) }}
 
@@ -135,3 +137,45 @@
 </div>
 
 {{ include('components/form/buttons.html.twig') }}
+
+{% set blocked_sections = [
+    {'key': 'accounts', 'type': 'account', 'field': 'login', 'title': __('Blocked accounts', 'moresecurity')},
+    {'key': 'ips', 'type': 'ip', 'field': 'ip', 'title': __('Blocked IPs', 'moresecurity')},
+    {'key': 'emails', 'type': 'email', 'field': 'email', 'title': __('Blocked password reset requests', 'moresecurity')},
+] %}
+{% for section in blocked_sections %}
+    {% set rows = blocked[section.key]|default([]) %}
+    {% if rows|length > 0 %}
+        <div class="row ps-4 mt-4">
+            <h3>{{ section.title }}</h3>
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>{{ __('Name') }}</th>
+                        <th>{{ __('Blocked until', 'moresecurity') }}</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for row in rows %}
+                    <tr>
+                        <td>{{ row[section.field] }}</td>
+                        <td>{{ row.blocked }}</td>
+                        <td class="text-end">
+                            <form method="post" action="{{ path('/plugins/moresecurity/front/config.form.php') }}">
+                                <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
+                                <input type="hidden" name="unblock_type" value="{{ section.type }}" />
+                                <input type="hidden" name="unblock_value" value="{{ row[section.field] }}" />
+                                <button type="submit" name="unblock" value="1" class="btn btn-sm btn-outline-danger">
+                                    <i class="ti ti-lock-open"></i>
+                                    <span>{{ __('Unblock', 'moresecurity') }}</span>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+{% endfor %}

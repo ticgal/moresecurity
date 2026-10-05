@@ -1,0 +1,8 @@
+title = "More Security gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "SHA-256 file fingerprints of the 2026-10-02 audit (not secrets; the rule matches file names containing 'password')"
+paths = ['''docs/security-audit-2026-10-02/source-sha256\.json''']

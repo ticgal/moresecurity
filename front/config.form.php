@@ -45,6 +45,16 @@ if (isset($_POST["update"])) {
     Html::back();
 }
 
+if (isset($_POST['unblock'])) {
+    // Derecho `config` UPDATE comprobado arriba; el CSRF lo valida el núcleo.
+    if (PluginMoresecurityConfig::unblock($_POST['unblock_type'] ?? null, $_POST['unblock_value'] ?? null)) {
+        Session::addMessageAfterRedirect(__('Unblocked successfully', 'moresecurity'));
+    } else {
+        Session::addMessageAfterRedirect(__('Invalid unblock request', 'moresecurity'), false, ERROR);
+    }
+    Html::back();
+}
+
 $redirect = $CFG_GLPI["root_doc"] . "/front/config.form.php";
 $redirect .= "?forcetab=" . urlencode('PluginMoresecurityConfig$1');
 Html::redirect($redirect);

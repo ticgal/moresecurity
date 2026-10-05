@@ -1,0 +1,228 @@
+import re, ssl, sys, subprocess, urllib.request, urllib.parse, http.cookiejar, os, json
+BASE = "https://localhost:8444"
+os.environ["XDG_DATA_HOME"] = "/home/tomas.morono/.local/share"
+ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k): return None
+
+class Client:
+    def __init__(self):
+        self.jar = http.cookiejar.CookieJar()
+        self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar),
+                                              urllib.request.HTTPSHandler(context=ctx), NoRedirect())
+    def req(self, method, path, data=None, headers=None):
+        body = urllib.parse.urlencode(data, doseq=True).encode() if data is not None else None
+        r = urllib.request.Request(BASE + path, data=body, method=method, headers=headers or {})
+        try:
+            resp = self.op.open(r); code = resp.status; text = resp.read().decode("utf8", "replace"); loc = resp.headers.get("Location")
+        except urllib.error.HTTPError as e:
+            code = e.code; text = e.read().decode("utf8", "replace"); loc = e.headers.get("Location")
+        return code, text, loc
+    def token(self, html):
+        m = re.search(r'name="_glpi_csrf_token"\s+value="([0-9a-f]+)"', html) or re.search(r'glpi:csrf_token"\s+content="([0-9a-f]+)"', html) \
+            or re.search(r'content="([0-9a-f]{64})"\s+property="glpi:csrf_token"', html) or re.search(r'value="([0-9a-f]{64})"\s+name="_glpi_csrf_token"', html)
+        return m.group(1) if m else None
+    def login_page(self):
+        code, html, _ = self.req("GET", "/index.php")
+        return self.token(html), html
+    def login(self, user, pw, token=None, path="/front/login.php", extra=None):
+        if token is None: token, _ = self.login_page()
+        d = {"login_name": user, "login_password": pw, "_glpi_csrf_token": token}
+        d.update(extra or {})
+        return self.req("POST", path, d)
+    def ajax_token(self):
+        code, html, _ = self.req("GET", "/front/central.php")
+        return self.token(html)
+
+def sql(q):
+    out = subprocess.run(["podman", "exec", "glpi_1109_mysql", "mysql", "-uglpi", "-pglpi", "glpi", "-N", "-B", "-e", q],
+                         capture_output=True, text=True).stdout
+    return [l.split("\t") for l in out.strip().splitlines() if l]
+
+def setcfg(**kv):
+    base = dict(number_attempts=0, time_blocked=300, max_time_blocked=86400, attempts_reset=0, time_reset=300,
+                ip_max_attempts=0, ip_time_blocked=300, ip_max_time_blocked=86400, ip_threshold=0)
+    base.update(kv)
+    sql("UPDATE glpi_plugin_moresecurity_configs SET " + ",".join(f"{k}={v}" for k, v in base.items()) + " WHERE id=1")
+
+def clean():
+    sql("DELETE FROM glpi_logs WHERE itemtype='Config' AND new_value LIKE 'unblock % mstest-%'")
+    sql("DELETE FROM glpi_plugin_moresecurity_logins WHERE login LIKE 'mstest-%' OR login IN ('glpi','normal','tech')")
+    sql("DELETE FROM glpi_plugin_moresecurity_loginips WHERE login LIKE 'mstest-%' OR login='' OR login IN ('glpi','normal','tech')")
+    sql("DELETE FROM glpi_plugin_moresecurity_lostpasswords WHERE email LIKE '%mstest.invalid'")
+
+P = F = 0
+def ok(name, cond, extra=""):
+    global P, F
+    print(("  PASS " if cond else "  FAIL ") + name + ("" if cond or not extra else f"  -> {extra}"))
+    if cond: P += 1
+    else: F += 1
+
+PLUGIN_ACCT = "Too many failed login attempts. Please try again later"
+PLUGIN_IP = "Too many failed login attempts from your IP"
+PLUGIN_RESET = "Too many password change attempts"
+def has(text, s): return s in text.replace("&#039;", "'")
+
+try:
+    clean()
+    sql("UPDATE glpi_configs SET value=1 WHERE name='notifications_mailing' AND context='core'")
+    # ---------------- login anónimo por la ruta nativa
+    print("Login nativo (anónimo)")
+    setcfg(number_attempts=3)
+    c = Client(); tok, _ = c.login_page()
+    codes = []
+    for i in range(3):
+        code, html, _ = c.login("mstest-http", "bad", tok if i == 0 else None); codes.append((code, has(html, PLUGIN_ACCT)))
+    code, html, _ = c.login("mstest-http", "bad")
+    ok("3 fallos devuelven 401 con el error nativo", codes == [(401, False)] * 3, str(codes))
+    ok("4º intento (ruta nativa /front/login.php) rechazado por el plugin", code == 401 and has(html, PLUGIN_ACCT), f"{code}")
+    code, html, _ = c.login("glpi", "glpi")
+    ok("cuenta distinta (glpi) sigue pudiendo entrar", code == 302, f"{code}")
+    # ---------------- MS-07: sin CSRF
+    print("MS-07 CSRF antes de contar")
+    clean(); c = Client(); c.login_page()
+    before = sql("SELECT COUNT(*) FROM glpi_plugin_moresecurity_logins")[0][0]
+    code, html, _ = c.req("POST", "/front/login.php", {"login_name": "mstest-nocsrf", "login_password": "bad"})
+    ok("POST sin token -> 403 (control CSRF nativo)", code == 403, f"{code}")
+    code, html, _ = c.req("POST", "/front/login.php", {"login_name": "mstest-nocsrf", "login_password": "bad", "_glpi_csrf_token": "0" * 64})
+    ok("POST con token inválido -> 403", code == 403, f"{code}")
+    n = sql("SELECT COUNT(*)+(SELECT COUNT(*) FROM glpi_plugin_moresecurity_loginips) FROM glpi_plugin_moresecurity_logins WHERE login LIKE 'mstest-%'")[0][0]
+    ok("sin token no se crea ninguna fila de contadores", n == "0", n)
+    # token usado dos veces (replay)
+    tok, _ = c.login_page()
+    c.login("mstest-replay", "bad", tok)
+    code, html, _ = c.login("mstest-replay", "bad", tok)
+    ok("reutilizar un token ya consumido -> 403", code == 403, f"{code}")
+    # ---------------- MS-01: sesión autenticada
+    print("MS-01 sesión autenticada")
+    clean(); setcfg(number_attempts=3)
+    c = Client(); code, _, _ = c.login("glpi", "glpi")
+    ok("login legítimo funciona (302)", code == 302, f"{code}")
+    res = []
+    for i in range(4):
+        t = c.ajax_token()
+        code, html, _ = c.login("mstest-auth", "bad", t)
+        res.append((code, has(html, PLUGIN_ACCT)))
+    ok("con sesión abierta, 4º intento hacia otra identidad rechazado por el plugin", res[:3] == [(401, False)] * 3 and res[3] == (401, True), str(res))
+    n = sql("SELECT login_try FROM glpi_plugin_moresecurity_logins WHERE login='mstest-auth'")
+    ok("los intentos desde sesión autenticada incrementan el contador", n and n[0][0] == "3", str(n))
+    # ---------------- MS-11 tipos
+    print("MS-11 tipos y longitudes")
+    clean(); setcfg(number_attempts=3)
+    c = Client(); tok, _ = c.login_page()
+    code, html, _ = c.req("POST", "/front/login.php", [("login_name[]", "x"), ("login_password", "y"), ("_glpi_csrf_token", tok)] and urllib.parse.parse_qs(f"login_name[]=x&login_password=y&_glpi_csrf_token={tok}"))
+    ok("login_name array -> 400 controlado (no 500)", code == 400, f"{code}")
+    tok, _ = c.login_page()
+    code, html, _ = c.login("a" * 300, "y", tok)
+    ok("login de 300 caracteres -> 400 controlado", code == 400, f"{code}")
+    tok, _ = c.login_page()
+    code, html, _ = c.req("POST", "/front/login.php", urllib.parse.parse_qs(f"login_name=ok&login_password[]=y&_glpi_csrf_token={tok}"))
+    ok("password array -> 400 controlado", code == 400, f"{code}")
+    n = sql("SELECT COUNT(*) FROM glpi_plugin_moresecurity_logins")[0][0]
+    ok("las peticiones malformadas no crean contadores", n == "0", n)
+    # ---------------- IP
+    print("Bloqueo por IP")
+    clean(); setcfg(number_attempts=0, ip_max_attempts=3)
+    c = Client(); r = []
+    for u in ["mstest-i1", "mstest-i2", "mstest-i3", "mstest-i4"]:
+        code, html, _ = c.login(u, "bad"); r.append((code, has(html, PLUGIN_IP)))
+    ok("3 admitidos, 4º (otra cuenta) bloqueado por IP", r == [(401, False)] * 3 + [(401, True)], str(r))
+    ip = sql("SELECT ip FROM glpi_plugin_moresecurity_loginips WHERE login LIKE 'mstest-%' LIMIT 1")[0][0]
+    # whitelist de esa IP: exenta
+    sql(f"INSERT INTO glpi_plugin_moresecurity_whitelists (name, value, type) VALUES ('{ip}', '{ip}', 1)")
+    code, html, _ = c.login("mstest-i5", "bad")
+    ok("IP en whitelist exenta del bloqueo (error nativo, no del plugin)", code == 401 and not has(html, PLUGIN_IP), f"{code}")
+    code, html, _ = c.login("glpi", "glpi")
+    ok("...y el login correcto desde esa IP funciona", code == 302, f"{code}")
+    sql("DELETE FROM glpi_plugin_moresecurity_whitelists WHERE name LIKE '%' AND value='" + ip + "'")
+    # ---------------- Recuperación
+    print("MS-04 / MS-02 recuperación de contraseña")
+    clean(); setcfg(attempts_reset=2)
+    def lp(path, email_fields, c=None):
+        c = c or Client()
+        code, html, _ = c.req("GET", "/front/lostpassword.php")
+        t = c.token(html)
+        d = urllib.parse.parse_qs(email_fields + f"&_glpi_csrf_token={t}")
+        return c.req("POST", path, d), c
+    c = Client()
+    res = []
+    for i in range(3):
+        (code, html, _), c = lp("/front/lostpassword.php", "email=x%40mstest.invalid", c)
+        res.append((code, has(html, PLUGIN_RESET)))
+    ok("ruta NATIVA /front/lostpassword.php limitada por el plugin (3ª rechazada)", res[2] == (401, True) and res[0][1] is False and res[1][1] is False, str(res))
+    clean(); setcfg(attempts_reset=2)
+    res = []
+    for i in range(3):
+        (code, html, _), c = lp("/plugins/moresecurity/front/lostpassword.form.php", "email=y%40mstest.invalid", c)
+        res.append((code, has(html, PLUGIN_RESET)))
+    ok("ruta del PLUGIN limitada igual (3ª rechazada)", res[2] == (401, True) and res[0][1] is False, str(res))
+    c = Client(); clean(); setcfg(attempts_reset=3)
+    sql("INSERT INTO glpi_plugin_moresecurity_lostpasswords (email, email_try) VALUES ('p1@mstest.invalid',1),('p2@mstest.invalid',2)")
+    (code, html, _), c = lp("/front/lostpassword.php", "email%5B0%5D=LIKE&email%5B1%5D=%25", c)
+    rows = sql("SELECT email, email_try, IFNULL(blocked,'NULL') FROM glpi_plugin_moresecurity_lostpasswords ORDER BY email")
+    ok("email array -> 400 sin tocar ninguna fila", code == 400 and rows == [["p1@mstest.invalid", "1", "NULL"], ["p2@mstest.invalid", "2", "NULL"]], f"{code} {rows}")
+    (code, html, _), c = lp("/plugins/moresecurity/front/lostpassword.form.php", "email%5B0%5D=LIKE&email%5B1%5D=%25", c)
+    rows = sql("SELECT email, email_try FROM glpi_plugin_moresecurity_lostpasswords ORDER BY email")
+    ok("email array por la ruta del plugin -> 400 sin tocar filas", code == 400 and rows == [["p1@mstest.invalid", "1"], ["p2@mstest.invalid", "2"]], f"{code} {rows}")
+    (code, html, _), c = lp("/front/lostpassword.php", "email=no-es-un-email", c)
+    ok("email con formato inválido -> 400", code == 400, f"{code}")
+    clean(); setcfg(attempts_reset=0, ip_max_attempts=2)
+    res = []
+    for e in ["m1", "m2", "m3"]:
+        (code, html, _), c = lp("/front/lostpassword.php", f"email={e}%40mstest.invalid", c)
+        res.append((code, has(html, PLUGIN_RESET)))
+    ok("presupuesto por IP en recuperación nativa (3ª rechazada con emails distintos)", res[2] == (401, True) and res[1][1] is False, str(res))
+    # recuperación sin CSRF no consume contadores
+    clean(); setcfg(attempts_reset=2)
+    c = Client(); c.req("GET", "/front/lostpassword.php")
+    code, html, _ = c.req("POST", "/front/lostpassword.php", {"email": "nocsrf@mstest.invalid"})
+    n = sql("SELECT COUNT(*) FROM glpi_plugin_moresecurity_lostpasswords")[0][0]
+    ok("recuperación sin token CSRF: 403 y sin contadores", code == 403 and n == "0", f"{code} {n}")
+    # ---------------- Desbloqueo administrativo
+    print("MS-03 desbloqueo administrativo (UI)")
+    clean(); setcfg(number_attempts=2)
+    v = Client()
+    for i in range(2): v.login("mstest-blk", "bad")
+    code, html, _ = v.login("mstest-blk", "bad")
+    ok("cuenta bloqueada", has(html, PLUGIN_ACCT), f"{code}")
+    a = Client(); a.login("glpi", "glpi")
+    tab = "/ajax/common.tabs.php?_target=/front/config.form.php&_itemtype=Config&_glpi_tab=PluginMoresecurityConfig%241&id=1"
+    code, html, _ = a.req("GET", tab, headers={"X-Requested-With": "XMLHttpRequest"})
+    if code == 500:  # primer render tras cambiar una plantilla en entorno dev (auto_reload de Twig)
+        code, html, _ = a.req("GET", tab, headers={"X-Requested-With": "XMLHttpRequest"})
+    ok("la pestaña lista la cuenta bloqueada con botón Unblock", "mstest-blk" in html and "unblock" in html, f"{code}")
+    t = a.token(html) or a.ajax_token()
+    code, _, _ = a.req("POST", "/plugins/moresecurity/front/config.form.php", {"unblock": 1, "unblock_type": "account", "unblock_value": "mstest-blk"})
+    ok("desbloqueo sin CSRF -> 403", code == 403, f"{code}")
+    still = sql("SELECT COUNT(*) FROM glpi_plugin_moresecurity_logins WHERE login='mstest-blk' AND blocked > NOW()")[0][0]
+    ok("...y la cuenta sigue bloqueada", still == "1", still)
+    m = re.search(r'name="_glpi_csrf_token" value="([0-9a-f]+)"', html)
+    code, _, loc = a.req("POST", "/plugins/moresecurity/front/config.form.php", {"unblock": 1, "unblock_type": "account", "unblock_value": "mstest-blk", "_glpi_csrf_token": m.group(1)})
+    st = sql("SELECT login_try, IFNULL(blocked,'NULL') FROM glpi_plugin_moresecurity_logins WHERE login='mstest-blk'")
+    ok("desbloqueo con CSRF por admin: 302 y fila limpia", code == 302 and st == [["0", "NULL"]], f"{code} {st}")
+    h = sql("SELECT COUNT(*) FROM glpi_logs WHERE itemtype='Config' AND new_value LIKE 'unblock account: mstest-blk%'")[0][0]
+    ok("el desbloqueo queda en el historial", h == "1", h)
+    code, html, _ = v.login("mstest-blk", "bad")
+    ok("tras desbloquear vuelve a admitirse (error nativo)", code == 401 and not has(html, PLUGIN_ACCT), f"{code}")
+    # usuario sin derechos
+    n = Client(); n.login("normal", "normal")
+    t = n.ajax_token()
+    code, _, _ = n.req("POST", "/plugins/moresecurity/front/config.form.php", {"unblock": 1, "unblock_type": "account", "unblock_value": "x", "_glpi_csrf_token": t})
+    ok("usuario sin derecho config no puede desbloquear (403/302 login)", code in (302, 403), f"{code}")
+    # ---------------- login correcto limpia
+    print("Login correcto libera el intento")
+    clean(); setcfg(number_attempts=3)
+    c = Client(); c.login("glpi", "bad"); c.login("glpi", "bad")
+    code, _, _ = c.login("glpi", "glpi")
+    st = sql("SELECT login_try FROM glpi_plugin_moresecurity_logins WHERE login='glpi'")
+    ok("2 fallos + 1 acierto -> contador a 0, entra (302)", code == 302 and st == [["0"]], f"{code} {st}")
+    c2 = Client()
+    for i in range(3): c2.login("glpi", "glpi") # 3 logins correctos seguidos nunca bloquean
+    code, _, _ = Client().login("glpi", "glpi")
+    ok("varios logins correctos seguidos no acumulan ni bloquean", code == 302, f"{code}")
+finally:
+    clean(); setcfg()
+    sql("UPDATE glpi_configs SET value=0 WHERE name='notifications_mailing' AND context='core'")
+print(f"\nResultado HTTP: {P} OK, {F} FALLOS")
+sys.exit(1 if F else 0)

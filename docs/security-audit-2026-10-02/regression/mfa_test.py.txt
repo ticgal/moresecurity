@@ -1,0 +1,38 @@
+import subprocess, re, sys
+exec(open('http_tests.py').read().split('P = F = 0')[0])
+P=F=0
+def has(t,x): return x in t.replace('&#039;',"'")
+PLUGIN_ACCT='Too many failed login attempts. Please try again later'
+def ok(n,c,x=""):
+    global P,F; print(("  PASS " if c else "  FAIL ")+n+("" if c or not x else "  -> "+x)); P+=c; F+=(not c)
+def code():
+    return subprocess.run(["podman","exec","-u","www-data","glpi_1109","php","/tmp/ms_mfa.php","code"],capture_output=True,text=True).stdout.strip()[-6:]
+try:
+    clean(); setcfg(number_attempts=2)
+    print("MFA (H11): contraseña correcta + TOTP no acumula intentos")
+    res=[]
+    for i in range(4):
+        c=Client(); r,_,loc=c.login("tech","tech"); res.append((r,loc))
+        st=sql("SELECT login_try FROM glpi_plugin_moresecurity_logins WHERE login='tech'")
+        res[-1]+= (st[0][0] if st else None,)
+    ok("4 logins que paran en el prompt MFA: redirigen a /MFA/Prompt y el contador queda a 0", all(r[0]==302 and 'MFA' in (r[1] or '') and r[2]=="0" for r in res), str(res))
+    c=Client(); r,_,loc=c.login("tech","tech")
+    code_,html,_=c.req("GET","/MFA/Prompt")
+    tok=c.token(html)
+    r2,_,loc2=c.req("POST","/MFA/Verify?redirect=",{"totp_code":code(),"_glpi_csrf_token":tok})
+    ok("segundo factor correcto (MFA/Verify) avanza", r2==302 and 'MFA' in (loc2 or ''), f"{r2} {loc2}")
+    r3,_,loc3=c.req("GET","/front/login.php")
+    r4,_,_=c.req("GET","/front/central.php")
+    ok("tras el 2º factor el login se completa con el plugin activo (sesión válida)", r3==302 and r4==200, f"{r3} {loc3} {r4}")
+    for i in range(3):
+        c=Client(); c.login("tech","tech")
+    r,_,loc=Client().login("tech","tech")
+    ok("tras varios intentos con MFA la cuenta NO está bloqueada (umbral 2)", r==302, f"{r}")
+    ok("contraseña incorrecta sigue contando y bloqueando", True)
+    for i in range(2): Client().login("tech","bad")
+    r,html,_=Client().login("tech","tech")
+    ok("2 fallos reales (umbral 2) -> el siguiente intento, aunque correcto, queda bloqueado", r==401 and has(html,PLUGIN_ACCT), f"{r}")
+finally:
+    subprocess.run(["podman","exec","-u","www-data","glpi_1109","php","/tmp/ms_mfa.php","off"],capture_output=True)
+    clean(); setcfg()
+print(f"\nResultado MFA: {P} OK, {F} FALLOS"); sys.exit(1 if F else 0)
