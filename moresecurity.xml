@@ -1,0 +1,46 @@
+<root>
+   <name>More Security</name>
+   <key>moresecurity</key>
+   <state>stable</state>
+   <logo>https://raw.githubusercontent.com/ticgal/moresecurity/multimedia/moresecurity.png</logo>
+   <description>
+      <short>
+         <en>More Security plugin adds an extra layer of security to GLPI by blocking login attempts and passwords resets.</en>
+      </short>
+      <long>
+         <en>
+More Security improves the native login behaviour of GLPI. It makes harder for attackers to login impersonating another user by enabling whitelists for your organization and blocking everyone outside them. It also limits the number of login attempts for each user.
+        </en>
+      </long>
+   </description>
+   <homepage>https://tic.gal</homepage>
+   <download>https://github.com/ticgal/moresecurity</download>
+   <issues>https://github.com/ticgal/moresecurity/issues</issues>
+   <readme>https://github.com/ticgal/moresecurity/blob/develop/README.md</readme>
+   <authors>
+      <author>TICGAL</author>
+   </authors>
+<versions>
+      <version>
+         <num>2.2.1</num>
+         <compatibility>~11.0.0</compatibility>
+         <download_url>https://github.com/ticgal/moresecurity/releases/download/untagged-eb7281d6b96fa91ee4e2/glpi-moresecurity-2.2.1.tar.bz2</download_url>
+      </version>
+   </versions>
+   <langs>
+      <lang>en_GB</lang>
+      <lang>es_ES</lang>
+      <lang>gl_ES</lang>
+   </langs>
+   <license>AGPL v3+</license>
+   <tags>
+      <en>
+         <tag>Users</tag>
+      </en>
+   </tags>
+   <screenshots>
+      <screenshot>https://raw.githubusercontent.com/ticgal/moresecurity/multimedia/moresecurity-1.png</screenshot>
+      <screenshot>https://raw.githubusercontent.com/ticgal/moresecurity/multimedia/moresecurity-2.png</screenshot>
+      <screenshot>https://raw.githubusercontent.com/ticgal/moresecurity/multimedia/moresecurity-3.png</screenshot>
+   </screenshots>
+</root>
