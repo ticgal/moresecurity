@@ -31,7 +31,7 @@
 use Glpi\Plugin\Hooks;
 use Glpi\Http\Firewall;
 
-define('PLUGIN_MORESECURITY_VERSION', '2.2.2-beta.1');
+define('PLUGIN_MORESECURITY_VERSION', '2.2.2');
 define('PLUGIN_MORESECURITY_MIN_GLPI', '11.0.0');
 define('PLUGIN_MORESECURITY_MAX_GLPI', '12.0.0');
 

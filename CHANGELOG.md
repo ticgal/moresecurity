@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.2.2-beta.1 - 05/10/2026
+## 2.2.2 - 05/10/2026
 ### Bugfix
 - Security audit 02/10/2026 (MS-01 to MS-11): login policy now also applies to authenticated sessions and runs only after a valid CSRF token
 - Password reset: same policy (validation, per-IP and per-email budget) on the native and plugin routes; rejects non-scalar/invalid emails
