@@ -28,7 +28,6 @@
 #}
 
 {% import 'components/form/fields_macros.html.twig' as fields %}
-{% import 'components/form/buttons.html.twig' as buttons %}
 
 {% if options is not defined %}
 {% set options = {} %}
@@ -163,7 +162,6 @@
                         <td>{{ row.blocked }}</td>
                         <td class="text-end">
                             <form method="post" action="{{ path('/plugins/moresecurity/front/config.form.php') }}">
-                                <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
                                 <input type="hidden" name="unblock_type" value="{{ section.type }}" />
                                 <input type="hidden" name="unblock_value" value="{{ row[section.field] }}" />
                                 <button type="submit" name="unblock" value="1" class="btn btn-sm btn-outline-danger">

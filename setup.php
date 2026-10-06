@@ -1,4 +1,5 @@
 <?php
+
 /*
  -------------------------------------------------------------------------
  More Security plugin for GLPI
@@ -22,60 +23,61 @@
  @author    the TICGAL team
  @copyright Copyright (c) 2022-2026 TICGAL team
  @license   AGPL License 3.0 or (at your option) any later version
-				http://www.gnu.org/licenses/agpl-3.0-standalone.html
+                http://www.gnu.org/licenses/agpl-3.0-standalone.html
  @link      https://www.tic.gal
  @since     2022
  ----------------------------------------------------------------------
 */
 
-use Glpi\Plugin\Hooks;
 use Glpi\Http\Firewall;
+use Glpi\Plugin\Hooks;
+use GlpiPlugin\Moresecurity\Config;
+use GlpiPlugin\Moresecurity\Whitelist;
 
-define('PLUGIN_MORESECURITY_VERSION', '2.2.2');
-define('PLUGIN_MORESECURITY_MIN_GLPI', '11.0.0');
-define('PLUGIN_MORESECURITY_MAX_GLPI', '12.0.0');
+define('PLUGIN_MORESECURITY_VERSION', '3.0.0-beta.1');
+define('PLUGIN_MORESECURITY_MIN_GLPI', '12.0.0');
+define('PLUGIN_MORESECURITY_MAX_GLPI', '12.1.0');
 
 function plugin_version_moresecurity()
 {
-	return [
-		'name' => 'More Security',
-		'version' => PLUGIN_MORESECURITY_VERSION,
-		'author' => '<a href="https://tic.gal">TICGAL</a>',
-		'homepage' => 'https://tic.gal',
-		'license' => 'GPLv3+',
-		'requirements' => [
-			'glpi' => [
-				'min' => PLUGIN_MORESECURITY_MIN_GLPI,
-				'max' => PLUGIN_MORESECURITY_MAX_GLPI,
-			]
-		]
-	];
+    return [
+        'name' => 'More Security',
+        'version' => PLUGIN_MORESECURITY_VERSION,
+        'author' => '<a href="https://tic.gal">TICGAL</a>',
+        'homepage' => 'https://tic.gal',
+        'license' => 'GPLv3+',
+        'requirements' => [
+            'glpi' => [
+                'min' => PLUGIN_MORESECURITY_MIN_GLPI,
+                'max' => PLUGIN_MORESECURITY_MAX_GLPI,
+            ],
+        ],
+    ];
 }
 
 function plugin_init_moresecurity()
 {
-	global $PLUGIN_HOOKS;
+    /** @var array $PLUGIN_HOOKS */
+    global $PLUGIN_HOOKS;
 
-	$PLUGIN_HOOKS['csrf_compliant']['moresecurity'] = true;
+    Firewall::addPluginStrategyForLegacyScripts(
+        'moresecurity',
+        '#^/front/login\.form\.php$#',
+        Firewall::STRATEGY_NO_CHECK,
+    );
+    Firewall::addPluginStrategyForLegacyScripts(
+        'moresecurity',
+        '#^/front/lostpassword\.form\.php$#',
+        Firewall::STRATEGY_NO_CHECK,
+    );
 
-	Firewall::addPluginStrategyForLegacyScripts(
-		'moresecurity',
-		'#^/front/login\.form\.php$#',
-		Firewall::STRATEGY_NO_CHECK
-	);
-	Firewall::addPluginStrategyForLegacyScripts(
-		'moresecurity',
-		'#^/front/lostpassword\.form\.php$#',
-		Firewall::STRATEGY_NO_CHECK
-	);
+    $plugin = new Plugin();
+    if ($plugin->isActivated('moresecurity')) {
+        $PLUGIN_HOOKS['config_page']['moresecurity'] = 'front/config.form.php';
+        Plugin::registerClass(Config::class, ['addtabon' => 'Config']);
+        Plugin::registerClass(Whitelist::class, ['addtabon' => 'Config']);
 
-	$plugin = new Plugin();
-	if ($plugin->isActivated('moresecurity')) {
-		$PLUGIN_HOOKS['config_page']['moresecurity'] = 'front/config.form.php';
-		Plugin::registerClass('PluginMoresecurityConfig', ['addtabon' => 'Config']);
-		Plugin::registerClass('PluginMoresecurityWhitelist', ['addtabon' => 'Config']);
-
-		$PLUGIN_HOOKS[Hooks::DISPLAY_LOGIN]['moresecurity'] = 'plugin_moresecurity_displayLogin';
-		$PLUGIN_HOOKS[Hooks::POST_INIT]['moresecurity'] = 'plugin_moresecurity_enforce_login_gate';
-	}
+        $PLUGIN_HOOKS[Hooks::DISPLAY_LOGIN]['moresecurity'] = 'plugin_moresecurity_displayLogin';
+        $PLUGIN_HOOKS[Hooks::POST_INIT]['moresecurity'] = 'plugin_moresecurity_enforce_login_gate';
+    }
 }

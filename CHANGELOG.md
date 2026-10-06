@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.0-beta.1 - 06/10/2026
+### Features
+- GLPI 12 support (GLPI 11 is no longer supported by this branch)
+- Changing the configuration, unblocking and editing the whitelist now require re-authentication, like the core configuration
+### Changes
+- Classes moved to `src/` under the `GlpiPlugin\Moresecurity` namespace; stored itemtypes (automatic action, display preferences, saved searches, history) are migrated on update
+- The login and password reset gate rejects cross-site requests with the header-based CSRF check of GLPI 12 (CSRF tokens no longer exist)
+- Includes the security fixes from 2.2.2
+
 ## 2.2.2 - 05/10/2026
 ### Bugfix
 - Security audit 02/10/2026 (MS-01 to MS-11): login policy now also applies to authenticated sessions and runs only after a valid CSRF token

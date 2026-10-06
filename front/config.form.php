@@ -1,4 +1,5 @@
 <?php
+
 /*
  -------------------------------------------------------------------------
  More Security plugin for GLPI
@@ -22,14 +23,17 @@
  @author    the TICGAL team
  @copyright Copyright (c) 2022-2026 TICGAL team
  @license   AGPL License 3.0 or (at your option) any later version
-				http://www.gnu.org/licenses/agpl-3.0-standalone.html
+                http://www.gnu.org/licenses/agpl-3.0-standalone.html
  @link      https://www.tic.gal
  @since     2022
  ----------------------------------------------------------------------
 */
-global $CFG_GLPI;
 
 use Glpi\Exception\Http\NotFoundHttpException;
+use GlpiPlugin\Moresecurity\Config;
+
+/** @var array $CFG_GLPI */
+global $CFG_GLPI;
 
 $plugin = new Plugin();
 if (!$plugin->isInstalled('moresecurity') || !$plugin->isActivated('moresecurity')) {
@@ -37,8 +41,9 @@ if (!$plugin->isInstalled('moresecurity') || !$plugin->isActivated('moresecurity
 }
 
 Session::checkRight('config', UPDATE);
+Config::checkReAuthenticationOrRedirect();
 
-$config = new PluginMoresecurityConfig();
+$config = new Config();
 if (isset($_POST["update"])) {
     $config->check($_POST['id'], UPDATE);
     $config->update($_POST);
@@ -47,7 +52,7 @@ if (isset($_POST["update"])) {
 
 if (isset($_POST['unblock'])) {
     // Derecho `config` UPDATE comprobado arriba; el CSRF lo valida el núcleo.
-    if (PluginMoresecurityConfig::unblock($_POST['unblock_type'] ?? null, $_POST['unblock_value'] ?? null)) {
+    if (Config::unblock($_POST['unblock_type'] ?? null, $_POST['unblock_value'] ?? null)) {
         Session::addMessageAfterRedirect(__('Unblocked successfully', 'moresecurity'));
     } else {
         Session::addMessageAfterRedirect(__('Invalid unblock request', 'moresecurity'), false, ERROR);
@@ -56,5 +61,5 @@ if (isset($_POST['unblock'])) {
 }
 
 $redirect = $CFG_GLPI["root_doc"] . "/front/config.form.php";
-$redirect .= "?forcetab=" . urlencode('PluginMoresecurityConfig$1');
+$redirect .= "?forcetab=" . urlencode(Config::class . '$1');
 Html::redirect($redirect);

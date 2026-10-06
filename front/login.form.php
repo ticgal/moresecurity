@@ -1,4 +1,5 @@
 <?php
+
 /*
  -------------------------------------------------------------------------
  More Security plugin for GLPI
@@ -22,7 +23,7 @@
  @author    the TICGAL team
  @copyright Copyright (c) 2022-2026 TICGAL team
  @license   AGPL License 3.0 or (at your option) any later version
-				http://www.gnu.org/licenses/agpl-3.0-standalone.html
+                http://www.gnu.org/licenses/agpl-3.0-standalone.html
  @link      https://www.tic.gal
  @since     2022
  ----------------------------------------------------------------------
@@ -34,7 +35,7 @@ global $CFG_GLPI;
 $SECURITY_STRATEGY = 'no_check';
 
 if (!isset($_SESSION["glpicookietest"]) || ($_SESSION["glpicookietest"] != 'testcookie')) {
-    if (!is_writable(GLPI_SESSION_DIR)) {
+    if (!Session::canWriteSessionFiles()) {
         Html::redirect($CFG_GLPI['root_doc'] . "/index.php?error=2");
     } else {
         Html::redirect($CFG_GLPI['root_doc'] . "/index.php?error=1");
