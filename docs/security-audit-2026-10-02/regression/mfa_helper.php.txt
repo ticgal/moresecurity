@@ -1,0 +1,15 @@
+<?php
+require '/var/www/glpi/vendor/autoload.php';
+require '/var/glpi/config/config_db.php';
+foreach (['GLPI_LOG_DIR'=>'/tmp','GLPI_CONFIG_DIR'=>'/var/glpi/config'] as $k=>$v) { if (!defined($k)) define($k,$v); }
+$DB = new DB(); $_SESSION = ['glpi_currenttime' => date('Y-m-d H:i:s')];
+use Glpi\Security\TOTPManager;
+$t = new TOTPManager(); $u = new User(); $u->getFromDBbyName('tech'); $id = $u->getID();
+switch ($argv[1]) {
+  case 'on': $s = $t->createSecret(); $t->setSecretForUser($id, $s); file_put_contents('/tmp/ms_secret', $s); echo "ON $id\n"; break;
+  case 'code':
+    $s = file_get_contents('/tmp/ms_secret');
+    $ref = new ReflectionMethod($t, 'getTwoFactorAuth'); $ref->setAccessible(true);
+    echo $ref->invoke($t)->getCode($s); break;
+  case 'off': $t->disable2FAForUser($id); echo "OFF\n"; break;
+}

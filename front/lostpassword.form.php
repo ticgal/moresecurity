@@ -55,16 +55,9 @@ if (isset($_REQUEST['password_forget_token'])) {
     }
 } else {
     if (isset($_POST['email'])) {
-        if (!PluginMoresecurityLostpassword::checkEmail($_POST['email'])) {
-            http_response_code(401);
-            TemplateRenderer::getInstance()->display('pages/login_error.html.twig', [
-                'errors'    => [__('Too many password change attempts. Please try again later.', 'moresecurity')],
-                'login_url' => $CFG_GLPI["root_doc"] . '/front/logout.php?noAUTO=1',
-            ]);
-            exit();
-        }
-        PluginMoresecurityLostpassword::addEmailTry($_POST['email']);
-        $user->showForgetPassword($_POST['email']);
+        // La política (validación, presupuesto por IP y por email) la aplica
+        // el gate de post_init para esta ruta y para la nativa (MS-04).
+        $user->showForgetPassword(PluginMoresecurityLimiter::cleanEmail($_POST['email']) ?? '');
     } else {
         PluginMoresecurityLostpassword::showPasswordForgetRequestForm();
     }

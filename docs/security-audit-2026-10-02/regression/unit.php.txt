@@ -1,0 +1,240 @@
+<?php
+// Pruebas de las correcciones MS-xx contra las tablas reales del plugin instalado.
+// Identidades sintéticas (mstest-*, 203.0.113.x, *.invalid); se limpian al terminar.
+if (PHP_SAPI !== 'cli') { exit(1); }
+require '/var/www/glpi/vendor/autoload.php';
+require '/var/glpi/config/config_db.php';
+$DB = new DB();
+if (!defined('GLPI_LOG_DIR')) { define('GLPI_LOG_DIR', '/tmp'); }
+$_SESSION = ['glpi_currenttime' => date('Y-m-d H:i:s')];
+foreach (['limiter','config','login','loginip','lostpassword','retention','whitelist'] as $c) {
+    require_once GLPI_ROOT . "/plugins/moresecurity/inc/$c.class.php";
+}
+$cfg = PluginMoresecurityConfig::getInstance();
+function setcfg(array $v): void {
+    global $cfg;
+    $cfg->fields = array_merge([
+        'number_attempts'=>0,'time_blocked'=>300,'max_time_blocked'=>86400,'attempts_reset'=>0,'time_reset'=>300,
+        'ip_max_attempts'=>0,'ip_time_blocked'=>300,'ip_max_time_blocked'=>86400,'ip_threshold'=>0,
+    ], $v);
+}
+function cleanup(): void {
+    global $DB;
+    $DB->doQuery("DELETE FROM glpi_plugin_moresecurity_logins WHERE login LIKE 'mstest-%'");
+    $DB->doQuery("DELETE FROM glpi_plugin_moresecurity_loginips WHERE login LIKE 'mstest-%' OR ip LIKE '203.0.113.%' OR ip LIKE '198.51.100.%'");
+    $DB->doQuery("DELETE FROM glpi_plugin_moresecurity_lostpasswords WHERE email LIKE '%@mstest.invalid'");
+}
+function q(string $sql): array { return PluginMoresecurityLimiter::fetchAll($sql); }
+
+// ---- modo worker (concurrencia) ----
+if (($argv[1] ?? '') === 'worker') {
+    setcfg(json_decode($argv[2], true));
+    [$kind, $a, $b] = [$argv[3], $argv[4], $argv[5]];
+    $r = $kind === 'login' ? PluginMoresecurityLogin::reserve($a, $b) : PluginMoresecurityLostpassword::reserve($a, $b);
+    echo $r === null ? "ADMIT\n" : "DENY:$r\n";
+    exit;
+}
+
+$fail = 0; $pass = 0;
+function ok(string $name, bool $cond, string $extra = ''): void {
+    global $fail, $pass;
+    echo ($cond ? "  PASS " : "  FAIL ") . $name . ($cond || !$extra ? '' : "  -> $extra") . "\n";
+    $cond ? $pass++ : $fail++;
+}
+function parallel(array $cfgv, string $kind, array $pairs): array {
+    $procs = [];
+    foreach ($pairs as [$a, $b]) {
+        $cmd = ['php', __FILE__, 'worker', json_encode($cfgv), $kind, $a, $b];
+        $p = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        $procs[] = [$p, $pipes];
+    }
+    $out = [];
+    foreach ($procs as [$p, $pipes]) {
+        $out[] = trim(stream_get_contents($pipes[1]));
+        fclose($pipes[1]); fclose($pipes[2]); proc_close($p);
+    }
+    return $out;
+}
+
+cleanup();
+$ipA = '203.0.113.10'; $ipB = '203.0.113.11'; $ipC = '203.0.113.12';
+$_SERVER['REMOTE_ADDR'] = $ipA;
+
+echo "MS-06 concurrencia (reserva atómica)\n";
+$res = parallel(['number_attempts' => 3], 'login', array_fill(0, 20, ['mstest-conc', $ipA]));
+$adm = count(array_filter($res, fn($r) => $r === 'ADMIT'));
+ok('20 peticiones simultáneas, umbral 3 -> exactamente 3 admitidas', $adm === 3, "admitidas=$adm " . implode(',', array_unique($res)));
+$row = q("SELECT login_try FROM glpi_plugin_moresecurity_logins WHERE login='mstest-conc'");
+ok('contador de cuenta exacto (3) y una sola fila', count($row) === 1 && (int)$row[0]['login_try'] === 3, json_encode($row));
+cleanup();
+$pairs = []; for ($i = 0; $i < 20; $i++) { $pairs[] = ["mstest-ip$i", $ipB]; }
+$res = parallel(['ip_max_attempts' => 3], 'login', $pairs);
+$adm = count(array_filter($res, fn($r) => $r === 'ADMIT'));
+ok('IP: 20 simultáneas con cuentas distintas, umbral 3 -> exactamente 3', $adm === 3, "admitidas=$adm");
+$sum = q("SELECT SUM(ip_try) s FROM glpi_plugin_moresecurity_loginips WHERE ip='$ipB'");
+ok('suma de intentos de la IP exacta (3)', (int)$sum[0]['s'] === 3, json_encode($sum));
+cleanup();
+$pairs = []; for ($i = 0; $i < 20; $i++) { $pairs[] = ["u$i@mstest.invalid", $ipC]; }
+$res = parallel(['attempts_reset' => 2], 'mail', array_map(fn($p) => ['same@mstest.invalid', $ipC], $pairs));
+$adm = count(array_filter($res, fn($r) => $r === 'ADMIT'));
+ok('recuperación: 20 simultáneas mismo email, umbral 2 -> exactamente 2', $adm === 2, "admitidas=$adm");
+$rows = q("SELECT email_try FROM glpi_plugin_moresecurity_lostpasswords WHERE email='same@mstest.invalid'");
+ok('una sola fila de email, contador 2', count($rows) === 1 && (int)$rows[0]['email_try'] === 2, json_encode($rows));
+cleanup();
+
+echo "Backoff y bloqueos acotados (MS-03/MS-10)\n";
+setcfg(['number_attempts' => 2, 'time_blocked' => 600, 'max_time_blocked' => 0]);
+$r = [];
+for ($i = 0; $i < 4; $i++) { $r[] = PluginMoresecurityLogin::reserve('mstest-bo', $ipA); }
+ok('intentos 1-2 admitidos, 3-4 rechazados', $r === [null, null, 'account', 'account'], json_encode($r));
+$b = q("SELECT TIMESTAMPDIFF(SECOND, NOW(), blocked) s FROM glpi_plugin_moresecurity_logins WHERE login='mstest-bo'");
+ok('bloqueo ~600 s, no 2037', $b[0]['s'] > 590 && $b[0]['s'] <= 600, json_encode($b));
+// forzar caducidad: siguiente intento escala (backoff x2)
+$DB->doQuery("UPDATE glpi_plugin_moresecurity_logins SET blocked = NOW() - INTERVAL 1 SECOND WHERE login='mstest-bo'");
+$r = PluginMoresecurityLogin::reserve('mstest-bo', $ipA);
+$b = q("SELECT login_try, TIMESTAMPDIFF(SECOND, NOW(), blocked) s FROM glpi_plugin_moresecurity_logins WHERE login='mstest-bo'");
+ok('tras caducar se admite y el siguiente bloqueo escala (1200 s)', $r === null && $b[0]['s'] > 1190 && $b[0]['s'] <= 1200 && (int)$b[0]['login_try'] === 3, json_encode($b));
+// tope duro sin max_time_blocked
+setcfg(['number_attempts' => 1, 'time_blocked' => 31536000, 'max_time_blocked' => 0]);
+cleanup();
+for ($i = 0; $i < 3; $i++) { PluginMoresecurityLogin::reserve('mstest-cap', $ipA); $DB->doQuery("UPDATE glpi_plugin_moresecurity_logins SET blocked = NOW() - INTERVAL 1 SECOND WHERE login='mstest-cap'"); }
+PluginMoresecurityLogin::reserve('mstest-cap', $ipA);
+$b = q("SELECT TIMESTAMPDIFF(DAY, NOW(), blocked) d FROM glpi_plugin_moresecurity_logins WHERE login='mstest-cap'");
+ok('backoff escalado nunca supera 1 año', (int)$b[0]['d'] <= 365, json_encode($b));
+ok('duración 0 -> mínimo 1 s', PluginMoresecurityLimiter::backoffDelay(0, 0, 0) === 1 && PluginMoresecurityLimiter::backoffDelay(-5, 3, 0) >= 1);
+cleanup();
+setcfg(['number_attempts' => 2, 'time_blocked' => 0]);
+PluginMoresecurityLogin::reserve('mstest-zero', $ipA); PluginMoresecurityLogin::reserve('mstest-zero', $ipA);
+$r = PluginMoresecurityLogin::reserve('mstest-zero', $ipA);
+ok('time_blocked=0 en BD: el bloqueo sigue siendo efectivo (>=1 s)', $r === 'account' || $r === null && false, json_encode($r));
+cleanup();
+// clamp en la configuración
+$cfg2 = new PluginMoresecurityConfig(); $cfg2->fields = $cfg->fields;
+$cfg2->fields += ['itemtypes' => ''];
+try {
+    $out = $cfg2->prepareInputForUpdate(['time_blocked' => 0, 'ip_time_blocked' => '0', 'time_reset' => -4, 'max_time_blocked' => 0, 'number_attempts' => 5]);
+    ok('config: time_blocked/ip_time_blocked/time_reset 0 o negativo -> 1; max_* admite 0',
+        $out['time_blocked'] === 1 && $out['ip_time_blocked'] === 1 && $out['time_reset'] === 1 && $out['max_time_blocked'] === 0, json_encode($out));
+} catch (Throwable $e) { ok('config clamp', false, $e->getMessage()); }
+
+echo "MS-09 detección distribuida independiente\n";
+setcfg(['number_attempts' => 0, 'ip_max_attempts' => 0, 'ip_threshold' => 2, 'max_time_blocked' => 0]);
+$r1 = PluginMoresecurityLogin::reserve('mstest-dist', $ipA);
+$r2 = PluginMoresecurityLogin::reserve('mstest-dist', $ipB);
+$r3 = PluginMoresecurityLogin::reserve('mstest-dist', $ipC);
+ok('con number_attempts=0, dos IP distintas bloquean la cuenta', $r1 === null && $r2 === null && $r3 === 'account', json_encode([$r1,$r2,$r3]));
+$b = q("SELECT TIMESTAMPDIFF(SECOND, NOW(), blocked) s FROM glpi_plugin_moresecurity_logins WHERE login='mstest-dist'");
+ok('bloqueo acotado a 1 día (no 2037)', $b[0]['s'] > 86300 && $b[0]['s'] <= 86400, json_encode($b));
+
+echo "MS-03 desbloqueo administrativo\n";
+PluginMoresecurityConfig::unblock('account', 'mstest-dist');
+$r = PluginMoresecurityLogin::reserve('mstest-dist', $ipA);
+ok('tras desbloquear la cuenta vuelve a admitirse', $r === null, json_encode($r));
+ok('tipos inválidos rechazados', PluginMoresecurityConfig::unblock(['x'], 'a') === false && PluginMoresecurityConfig::unblock('bogus', 'a') === false);
+cleanup();
+setcfg(['ip_max_attempts' => 1, 'ip_time_blocked' => 600]);
+PluginMoresecurityLogin::reserve('mstest-u1', $ipA);
+ok('IP bloqueada tras superar umbral', PluginMoresecurityLogin::reserve('mstest-u2', $ipA) === 'ip');
+ok('listado administrativo incluye la IP', in_array($ipA, array_column(PluginMoresecurityLoginip::getBlocked(), 'ip'), true));
+PluginMoresecurityConfig::unblock('ip', $ipA);
+ok('tras desbloquear la IP se admite', PluginMoresecurityLogin::reserve('mstest-u3', $ipA) === null);
+cleanup();
+
+echo "MS-05 caducidad en recuperación + MS-04 presupuesto por IP\n";
+setcfg(['attempts_reset' => 3, 'time_reset' => 300]);
+$DB->doQuery("INSERT INTO glpi_plugin_moresecurity_lostpasswords (email, email_try, last_try) VALUES ('legacy@mstest.invalid', 3, NOW())");
+$r = PluginMoresecurityLostpassword::reserve('legacy@mstest.invalid', $ipA);
+$b = q("SELECT TIMESTAMPDIFF(SECOND, NOW(), blocked) s FROM glpi_plugin_moresecurity_lostpasswords WHERE email='legacy@mstest.invalid'");
+ok('contador>=umbral sin fecha: se rechaza Y se fija caducidad', $r === 'email' && $b[0]['s'] > 290 && $b[0]['s'] <= 300, json_encode([$r, $b]));
+$DB->doQuery("UPDATE glpi_plugin_moresecurity_lostpasswords SET blocked = NOW() - INTERVAL 1 SECOND WHERE email='legacy@mstest.invalid'");
+ok('al caducar se admite de nuevo', PluginMoresecurityLostpassword::reserve('legacy@mstest.invalid', $ipA) === null);
+cleanup();
+setcfg(['attempts_reset' => 0, 'ip_max_attempts' => 3, 'ip_time_blocked' => 600]);
+$r = [];
+foreach (['a','b','c','d'] as $x) { $r[] = PluginMoresecurityLostpassword::reserve("$x@mstest.invalid", $ipB); }
+ok('recuperación: presupuesto por IP (3 admitidas, 4ª rechazada) con emails distintos', $r === [null,null,null,'ip'], json_encode($r));
+ok('el mismo presupuesto bloquea también el login desde esa IP (política compartida)', PluginMoresecurityLogin::reserve('mstest-x', $ipB) === 'ip');
+$n = q("SELECT COUNT(*) c FROM glpi_plugin_moresecurity_lostpasswords WHERE email LIKE '%@mstest.invalid'");
+ok('con attempts_reset=0 no se almacenan filas de email', (int)$n[0]['c'] === 0, json_encode($n));
+cleanup();
+setcfg(['attempts_reset' => 2, 'time_reset' => 300]);
+$old = ['x@mstest.invalid'];
+$DB->doQuery("INSERT INTO glpi_plugin_moresecurity_lostpasswords (email, email_try, last_try) VALUES ('stale@mstest.invalid', 9, NOW() - INTERVAL 13 HOUR)");
+ok('contador inactivo >12 h se reinicia (ventana)', PluginMoresecurityLostpassword::reserve('stale@mstest.invalid', $ipA) === null);
+$b = q("SELECT email_try FROM glpi_plugin_moresecurity_lostpasswords WHERE email='stale@mstest.invalid'");
+ok('contador reiniciado a 1', (int)$b[0]['email_try'] === 1, json_encode($b));
+cleanup();
+
+echo "MS-02/MS-11 validación de entradas\n";
+ok('email array rechazado', PluginMoresecurityLimiter::cleanEmail(['LIKE', '%']) === null);
+ok('email con formato inválido rechazado', PluginMoresecurityLimiter::cleanEmail('no-es-email') === null);
+ok('email demasiado largo rechazado', PluginMoresecurityLimiter::cleanEmail(str_repeat('a', 250) . '@x.es') === null);
+ok('email normalizado a minúsculas', PluginMoresecurityLimiter::cleanEmail(' Foo@Mstest.Invalid ') === 'foo@mstest.invalid');
+ok('login array / int / null / vacío / largo rechazados',
+    PluginMoresecurityLimiter::cleanIdentity(['a']) === null && PluginMoresecurityLimiter::cleanIdentity(5) === null
+    && PluginMoresecurityLimiter::cleanIdentity(null) === null && PluginMoresecurityLimiter::cleanIdentity('   ') === null
+    && PluginMoresecurityLimiter::cleanIdentity(str_repeat('a', 256)) === null && PluginMoresecurityLimiter::cleanIdentity("a\0b") === null);
+ok('login se normaliza con trim', PluginMoresecurityLimiter::cleanIdentity('  tech ') === 'tech');
+ok('contraseña no escalar rechazada', !PluginMoresecurityLimiter::isPlainString(['x']) && PluginMoresecurityLimiter::isPlainString('x'));
+setcfg(['attempts_reset' => 3]);
+$before = q("SELECT COUNT(*) c FROM glpi_plugin_moresecurity_lostpasswords")[0]['c'];
+// ninguna API acepta ya un array: reserve() tiene tipo string
+$threw = false;
+try { PluginMoresecurityLostpassword::reserve(['LIKE', '%'], $ipA); } catch (TypeError $e) { $threw = true; }
+$after = q("SELECT COUNT(*) c FROM glpi_plugin_moresecurity_lostpasswords")[0]['c'];
+ok('reserve() con array lanza TypeError sin tocar filas', $threw && $before === $after);
+ok('comillas/OR se almacenan literalmente en una sola fila', (function () use ($ipA) {
+    $e = "x'\" OR '1'='1@mstest.invalid";
+    PluginMoresecurityLostpassword::reserve($e, $ipA);
+    $n = q("SELECT COUNT(*) c FROM glpi_plugin_moresecurity_lostpasswords WHERE email LIKE '%@mstest.invalid'");
+    return (int)$n[0]['c'] === 1;
+})());
+cleanup();
+
+echo "MS-08 retención y cardinalidad\n";
+setcfg(['ip_max_attempts' => 1000, 'number_attempts' => 5]);
+for ($i = 0; $i < PluginMoresecurityLimiter::MAX_IDENTITIES_PER_IP; $i++) { PluginMoresecurityLogin::reserve("mstest-card$i", $ipC); }
+$beforeLogins = q("SELECT COUNT(*) c FROM glpi_plugin_moresecurity_logins WHERE login LIKE 'mstest-%'")[0]['c'];
+PluginMoresecurityLogin::reserve('mstest-overflow', $ipC);
+$afterLogins = q("SELECT COUNT(*) c FROM glpi_plugin_moresecurity_logins WHERE login LIKE 'mstest-%'")[0]['c'];
+$anon = q("SELECT ip_try FROM glpi_plugin_moresecurity_loginips WHERE login='' AND ip='$ipC'");
+ok('identidad nº 101 desde una IP no crea fila de cuenta', $beforeLogins === $afterLogins, "$beforeLogins -> $afterLogins");
+ok('...pero sí suma al cubo anónimo de la IP', (int)($anon[0]['ip_try'] ?? 0) === 1, json_encode($anon));
+cleanup();
+$DB->doQuery("INSERT INTO glpi_plugin_moresecurity_logins (login, login_try, last_try, blocked) VALUES
+  ('mstest-old', 2, NOW() - INTERVAL 30 DAY, NULL),
+  ('mstest-oldblocked', 5, NOW() - INTERVAL 30 DAY, NOW() + INTERVAL 1 HOUR),
+  ('mstest-cleared', 0, NULL, NULL),
+  ('mstest-recent', 1, NOW(), NULL)");
+PluginMoresecurityLogin::purge(7);
+$left = array_column(q("SELECT login FROM glpi_plugin_moresecurity_logins WHERE login LIKE 'mstest-%' ORDER BY login"), 'login');
+ok('purga borra antiguas y a cero; conserva bloqueadas y recientes', $left === ['mstest-oldblocked', 'mstest-recent'], json_encode($left));
+cleanup();
+$cron = q("SELECT name, frequency FROM glpi_crontasks WHERE itemtype='PluginMoresecurityRetention'");
+ok('acción automática de retención registrada (diaria)', count($cron) === 1 && $cron[0]['name'] === 'Purge' && (int)$cron[0]['frequency'] === 86400, json_encode($cron));
+
+echo "Reloj único / whitelist exenta\n";
+setcfg(['number_attempts' => 1]);
+$DB->doQuery("INSERT INTO glpi_plugin_moresecurity_logins (login, login_try, last_try) VALUES ('mstest-clock', 1, NOW() - INTERVAL 11 HOUR)");
+ok('fila con last_try = NOW()-11h sigue dentro de la ventana de 12 h (misma base de tiempo)', PluginMoresecurityLogin::reserve('mstest-clock', $ipA) === 'account');
+cleanup();
+
+echo "Migración: duplicados heredados e índice único\n";
+$DB->doQuery("ALTER TABLE glpi_plugin_moresecurity_lostpasswords DROP INDEX email, ADD INDEX email (email)");
+$DB->doQuery("INSERT INTO glpi_plugin_moresecurity_lostpasswords (email, email_try, blocked) VALUES ('dup@mstest.invalid', 1, NULL), ('dup@mstest.invalid', 2, '2037-12-31 23:59:59')");
+$m = new Migration('2.2.2');
+PluginMoresecurityLostpassword::install($m); $m->executeMigration();
+$rows = q("SELECT email_try, TIMESTAMPDIFF(DAY, NOW(), blocked) d FROM glpi_plugin_moresecurity_lostpasswords WHERE email='dup@mstest.invalid'");
+ok('duplicados fusionados (suma 3) y bloqueo 2037 recortado a <=1 año', count($rows) === 1 && (int)$rows[0]['email_try'] === 3 && (int)$rows[0]['d'] <= 365, json_encode($rows));
+$idx = q("SHOW INDEX FROM glpi_plugin_moresecurity_lostpasswords WHERE Key_name='email'");
+ok('índice email ahora UNIQUE', count($idx) === 1 && (int)$idx[0]['Non_unique'] === 0, json_encode($idx));
+$DB->doQuery("ALTER TABLE glpi_plugin_moresecurity_loginips DROP INDEX login_ip");
+$DB->doQuery("INSERT INTO glpi_plugin_moresecurity_loginips (login, ip, ip_try, last_try) VALUES ('mstest-d', '$ipA', 1, NOW()), ('mstest-d', '$ipA', 4, NOW())");
+$m = new Migration('2.2.2'); PluginMoresecurityLoginip::install($m); $m->executeMigration();
+$rows = q("SELECT ip_try FROM glpi_plugin_moresecurity_loginips WHERE login='mstest-d'");
+$idx = q("SHOW INDEX FROM glpi_plugin_moresecurity_loginips WHERE Key_name='login_ip'");
+ok('loginip: duplicados fusionados (5) antes de crear el UNIQUE', count($rows) === 1 && (int)$rows[0]['ip_try'] === 5 && count($idx) === 2, json_encode([$rows, count($idx)]));
+cleanup();
+
+echo "\nResultado: $pass OK, $fail FALLOS\n";
+exit($fail ? 1 : 0);

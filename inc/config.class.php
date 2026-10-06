@@ -47,6 +47,10 @@ class PluginMoresecurityConfig extends CommonDBTM
 	private const COUNT_FIELDS = ['number_attempts', 'ip_max_attempts', 'ip_threshold', 'attempts_reset'];
 	private const TIME_FIELDS  = ['time_blocked', 'max_time_blocked', 'ip_time_blocked', 'ip_max_time_blocked', 'time_reset'];
 
+	// Duraciones de bloqueo reales: 0 las dejaría inefectivas (MS-10). Los
+	// "max_*" sí admiten 0 con el significado "sin tope de backoff".
+	private const POSITIVE_TIME_FIELDS = ['time_blocked', 'ip_time_blocked', 'time_reset'];
+
 	public function __construct()
 	{
 		global $DB;
@@ -134,6 +138,11 @@ class PluginMoresecurityConfig extends CommonDBTM
 		$template = "@moresecurity/forms/config.form.html.twig";
 		TemplateRenderer::getInstance()->display($template, [
 			'item' => $config,
+			'blocked' => [
+				'accounts' => PluginMoresecurityLogin::getBlocked(),
+				'ips'      => PluginMoresecurityLoginip::getBlocked(),
+				'emails'   => PluginMoresecurityLostpassword::getBlocked(),
+			],
 			'options' => [
 				'full_width' => true,
 			],
@@ -166,7 +175,8 @@ class PluginMoresecurityConfig extends CommonDBTM
 		}
 		foreach (self::TIME_FIELDS as $field) {
 			if (array_key_exists($field, $input)) {
-				$input[$field] = self::clampInput($input[$field], 0, self::MAX_BLOCK_SECONDS, (int) $this->fields[$field]);
+				$min = in_array($field, self::POSITIVE_TIME_FIELDS, true) ? 1 : 0;
+				$input[$field] = self::clampInput($input[$field], $min, self::MAX_BLOCK_SECONDS, max($min, (int) $this->fields[$field]));
 			}
 		}
 
@@ -202,6 +212,29 @@ class PluginMoresecurityConfig extends CommonDBTM
 		}
 
 		return $input;
+	}
+
+	/**
+	 * Desbloqueo administrativo (MS-03). El llamador debe haber comprobado
+	 * el derecho `config` UPDATE y el token CSRF. Se audita en el historial.
+	 */
+	public static function unblock(mixed $type, mixed $value): bool
+	{
+		if (!is_string($type) || !is_string($value) || $value === '' || strlen($value) > 255) {
+			return false;
+		}
+
+		$done = match ($type) {
+			'account' => PluginMoresecurityLogin::unblock($value),
+			'ip'      => PluginMoresecurityLoginip::unblock($value),
+			'email'   => PluginMoresecurityLostpassword::unblock($value),
+			default   => false,
+		};
+		if ($done) {
+			Log::history(1, 'Config', [0, '', sprintf('unblock %s: %s', $type, $value)]);
+		}
+
+		return $done;
 	}
 
 	/**
