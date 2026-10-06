@@ -2,15 +2,13 @@
    <name>More Security</name>
    <key>moresecurity</key>
    <state>stable</state>
-   <logo>https://raw.githubusercontent.com/ticgal/moresecurity/multimedia/moresecurity.png</logo>
+   <logo>https://raw.githubusercontent.com/ticgal/moresecurity/multimedia/logo.png</logo>
    <description>
       <short>
-         <en>More Security plugin adds an extra layer of security to GLPI by blocking login attempts and passwords resets.</en>
+         <en>More Security plugin adds an extra layer of security to GLPI by blocking login attempts and password resets.</en>
       </short>
       <long>
-         <en>
-More Security improves the native login behaviour of GLPI. It makes harder for attackers to login impersonating another user by enabling whitelists for your organization and blocking everyone outside them. It also limits the number of login attempts for each user.
-        </en>
+         <en>More Security improves the native login behavior of GLPI by protecting both login attempts and password reset requests. It makes it harder for attackers to impersonate users by enabling organization whitelists, limiting failed login attempts, and providing a dedicated security dashboard. This product includes DB-IP Lite data created by DB-IP (https://db-ip.com/), available under the Creative Commons Attribution 4.0 International License (CC BY 4.0)</en>
       </long>
    </description>
    <homepage>https://tic.gal</homepage>
@@ -20,11 +18,11 @@ More Security improves the native login behaviour of GLPI. It makes harder for a
    <authors>
       <author>TICGAL</author>
    </authors>
-<versions>
+   <versions>
       <version>
-         <num>2.2.1</num>
+         <num>2.2.2</num>
          <compatibility>~11.0.0</compatibility>
-         <download_url>https://github.com/ticgal/moresecurity/releases/download/untagged-eb7281d6b96fa91ee4e2/glpi-moresecurity-2.2.1.tar.bz2</download_url>
+         <download_url>https://github.com/ticgal/moresecurity/releases/download/2.2.2/glpi-moresecurity-2.2.2.tar.bz2</download_url>
       </version>
    </versions>
    <langs>
@@ -35,7 +33,9 @@ More Security improves the native login behaviour of GLPI. It makes harder for a
    <license>AGPL v3+</license>
    <tags>
       <en>
-         <tag>Users</tag>
+         <tag>Security</tag>
+         <tag>Authentication</tag>
+         <tag>Setup</tag>
       </en>
    </tags>
    <screenshots>
