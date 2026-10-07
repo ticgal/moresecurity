@@ -2,7 +2,7 @@
    <name>More Security</name>
    <key>moresecurity</key>
    <state>stable</state>
-   <logo>https://raw.githubusercontent.com/ticgal/moresecurity/multimedia/logo.png</logo>
+   <logo>https://raw.githubusercontent.com/ticgal/moresecurity/multimedia/moresecurity.png</logo>
    <description>
       <short>
          <en>More Security plugin adds an extra layer of security to GLPI by blocking login attempts and password resets.</en>
