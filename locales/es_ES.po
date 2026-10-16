@@ -1,38 +1,346 @@
+# More Security plugin for GLPI.
+# Copyright (C) 2024-2026 TICgal
+# This file is distributed under the same license as the More Security plugin.
+#
 msgid ""
 msgstr ""
 "Project-Id-Version: More Security\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-12-04 09:34+0100\n"
 "Language: es_ES\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"X-Generator: Localazy (https://localazy.com)\n"
 "Plural-Forms: nplurals=2; plural=(n==1) ? 0 : 1;\n"
 
-#: front/login.form.php:85
+#: front/config.form.php
+msgid "Unblocked successfully"
+msgstr "Desbloqueado correctamente"
+
+#: front/config.form.php
+msgid "Invalid unblock request"
+msgstr "Solicitud de desbloqueo no válida"
+
+#: front/config.form.php
+#, python-format
+msgid "%d entry unblocked"
+msgid_plural "%d entries unblocked"
+msgstr[0] "%d entrada desbloqueada"
+msgstr[1] "%d entradas desbloqueadas"
+
+#: hook.php
+msgid "Login from your location is not permitted."
+msgstr "No se permite iniciar sesión desde su ubicación."
+
+#: hook.php
+msgid "Too many failed login attempts from your IP. Please try again later."
+msgstr ""
+"Demasiados intentos fallidos de inicio de sesión desde su IP. Vuelva a "
+"intentarlo más tarde."
+
+#: hook.php
 msgid "Too many failed login attempts. Please try again later"
 msgstr ""
 "Demasiados intentos fallidos de inicio de sesión. Vuelva a intentarlo más "
 "tarde"
 
-#: front/lostpassword.form.php:64
+#: hook.php
+msgid "Please enter a valid email address."
+msgstr "Introduzca una dirección de correo electrónico válida."
+
+#: hook.php
 msgid "Too many password change attempts. Please try again later."
 msgstr ""
 "Demasiados intentos de cambio de contraseña. Vuelva a intentarlo más tarde."
 
-#: entrada estándar:44
+#: inc/attemptlog.class.php inc/profile.class.php
+msgid "Security log"
+msgstr "Registro de seguridad"
+
+#: inc/attemptlog.class.php
+msgid "Login"
+msgstr "Iniciar sesión"
+
+#: inc/attemptlog.class.php
+msgid "Login IP"
+msgstr "IP de inicio de sesión"
+
+#: inc/attemptlog.class.php
+msgid "Password reset"
+msgstr "Restablecimiento de contraseña"
+
+#: inc/attemptlog.class.php
+msgid "Password reset IP"
+msgstr "IP de restablecimiento de contraseña"
+
+#: inc/attemptlog.class.php
+msgid "Login Geoblocked"
+msgstr "Inicio de sesión geobloqueado"
+
+#: inc/attemptlog.class.php
+msgid "Blocked login attempt for %1$s from IP %2$s (geoblocked: %3$s)"
+msgstr ""
+"Intento de inicio de sesión bloqueado para %1$s desde la IP %2$s "
+"(geobloqueado: %3$s)"
+
+#: inc/attemptlog.class.php templates/attempt_summary.html.twig
+msgid "Type"
+msgstr "Tipo"
+
+#: inc/attemptlog.class.php templates/attempt_summary.html.twig
+msgid "Country"
+msgstr "País"
+
+#: inc/attemptlog.class.php templates/attempt_tabs.html.twig
+msgid "Attempt log"
+msgid_plural "Attempt logs"
+msgstr[0] "Registro de intentos"
+msgstr[1] "Registros de intentos"
+
+#: inc/config.class.php
+msgid ""
+"The account lockout threshold must be greater than the IP lockout threshold."
+" It has been adjusted automatically."
+msgstr ""
+"El umbral de bloqueo de cuenta debe ser mayor que el umbral de bloqueo por "
+"IP. Se ha ajustado automáticamente."
+
+#: inc/config.class.php
+#, python-format
+msgid "Ignored invalid IP entry: %s"
+msgstr "Entrada de IP no válida ignorada: %s"
+
+#: inc/dashboardgrid.class.php
+msgid "More Security"
+msgstr "More Security"
+
+#: inc/geoip.class.php
+msgid "Private"
+msgstr "Privada"
+
+#: inc/geoip.class.php
+msgid "Reserved"
+msgstr "Reservada"
+
+#: inc/geoip.class.php
+msgid "Unknown"
+msgstr "Desconocido"
+
+#: inc/geoip.class.php
+msgid "private/local address"
+msgstr "dirección privada/local"
+
+#: inc/geoip.class.php
+msgid "database unavailable"
+msgstr "base de datos no disponible"
+
+#: inc/geoip.class.php
+msgid ""
+"GeoIP lookup failed for IP %1$s (%2$s) — login allowed through (fail-open)"
+msgstr ""
+"Falló la consulta GeoIP para la IP %1$s (%2$s): inicio de sesión permitido "
+"(fail-open)"
+
+#: inc/geoip.class.php
+msgid "Download the monthly DB-IP Lite country database"
+msgstr "Descargar la base de datos mensual de países DB-IP Lite"
+
+#: inc/geoip.class.php
+msgid "GeoIP database updated successfully."
+msgstr "Base de datos GeoIP actualizada correctamente."
+
+#: inc/geoip.class.php
+msgid "GeoIP database update failed."
+msgstr "Falló la actualización de la base de datos GeoIP."
+
+#: inc/retention.class.php
+msgid "Purge security logs based on retention policy"
+msgstr "Purgar los registros de seguridad según la política de retención"
+
+#: inc/retention.class.php
+msgid "Retention period (days)"
+msgstr "Periodo de retención (días)"
+
+#: inc/retention.class.php
+msgid "Purge old login and password reset attempt records"
+msgstr ""
+"Purgar registros antiguos de intentos de inicio de sesión y de "
+"restablecimiento de contraseña"
+
+#: inc/whitelist.class.php
+msgid "Invalid IP address or CIDR range."
+msgstr "Dirección IP o rango CIDR no válido."
+
+#: inc/whitelist.class.php
+msgid "Whitelist"
+msgid_plural "Whitelists"
+msgstr[0] "Lista blanca"
+msgstr[1] "Listas blancas"
+
+#: templates/attempt_summary.html.twig
+msgid "Email"
+msgid_plural "Emails"
+msgstr[0] "Correo electrónico"
+msgstr[1] "Correos electrónicos"
+
+#: templates/attempt_tabs.html.twig
+msgid "Summary"
+msgstr "Resumen"
+
+#: templates/forms/config.form.html.twig
+msgid "Login attempts"
+msgstr "Intentos de inicio de sesión"
+
+#: templates/forms/config.form.html.twig
 msgid "Number of attempts"
 msgstr "Número de intentos"
 
-#: entrada estándar:54
+#: templates/forms/config.form.html.twig
 msgid "Access time blocked"
 msgstr "Tiempo de acceso bloqueado"
 
-#: entrada estándar:62
+#: templates/forms/config.form.html.twig
+msgid "Max access time blocked (backoff cap)"
+msgstr "Tiempo máximo de acceso bloqueado (límite del backoff)"
+
+#: templates/forms/config.form.html.twig
+msgid "IP blocking"
+msgstr "Bloqueo de IP"
+
+#: templates/forms/config.form.html.twig
+msgid "Max attempts per IP"
+msgstr "Máximo de intentos por IP"
+
+#: templates/forms/config.form.html.twig
+msgid "IP block duration"
+msgstr "Duración del bloqueo de IP"
+
+#: templates/forms/config.form.html.twig
+msgid "Max IP block duration (backoff cap)"
+msgstr "Duración máxima del bloqueo de IP (límite del backoff)"
+
+#: templates/forms/config.form.html.twig
+msgid "IP threshold (0 = disabled)"
+msgstr "Umbral de IP (0 = desactivado)"
+
+#: templates/forms/config.form.html.twig
+msgid "Password reset attempts"
+msgstr "Intentos de restablecimiento de contraseña"
+
+#: templates/forms/config.form.html.twig
 msgid "Attempts for Password Reset"
 msgstr "Intentos de restablecer la contraseña"
 
-#: entrada estándar:72
+#: templates/forms/config.form.html.twig
 msgid "Access time blocked for Password Reset"
 msgstr "Tiempo de acceso bloqueado para restablecer la contraseña"
+
+#: templates/forms/config.form.html.twig
+msgid "Trusted proxies"
+msgstr "Proxies de confianza"
+
+#: templates/forms/config.form.html.twig
+msgid "Trusted reverse proxy IPs"
+msgstr "IP de proxies inversos de confianza"
+
+#: templates/forms/config.form.html.twig
+msgid ""
+"Comma-separated (e.g. 10.0.0.1,10.0.0.2). X-Forwarded-For is only honoured "
+"when the request comes from one of these."
+msgstr ""
+"Separados por comas (p. ej. 10.0.0.1,10.0.0.2). X-Forwarded-For solo se "
+"tiene en cuenta cuando la petición procede de una de estas IP."
+
+#: templates/forms/config.form.html.twig
+msgid "Geoblocking"
+msgstr "Geobloqueo"
+
+#: templates/forms/config.form.html.twig
+msgid "Disabled"
+msgstr "Desactivado"
+
+#: templates/forms/config.form.html.twig
+msgid "Only allow these countries"
+msgstr "Permitir solo estos países"
+
+#: templates/forms/config.form.html.twig
+msgid "Block these countries"
+msgstr "Bloquear estos países"
+
+#: templates/forms/config.form.html.twig
+msgid "Mode"
+msgstr "Modo"
+
+#: templates/forms/config.form.html.twig
+msgid "Countries"
+msgstr "Países"
+
+#: templates/forms/config.form.html.twig
+msgid ""
+"The GeoIP database has not been downloaded yet. It is fetched by the "
+"\"updatedb\" automatic action; until then geoblocking lets every login "
+"through."
+msgstr ""
+"La base de datos GeoIP aún no se ha descargado. La obtiene la acción "
+"automática \"updatedb\"; hasta entonces el geobloqueo deja pasar todos los "
+"inicios de sesión."
+
+#: templates/forms/config.form.html.twig
+msgid "IP geolocation data by"
+msgstr "Datos de geolocalización de IP de"
+
+#: templates/forms/config.form.html.twig
+msgid "CC BY 4.0"
+msgstr "CC BY 4.0"
+
+#: templates/forms/config.form.html.twig
+msgid "Blocked accounts"
+msgstr "Cuentas bloqueadas"
+
+#: templates/forms/config.form.html.twig
+msgid "Blocked IPs"
+msgstr "IP bloqueadas"
+
+#: templates/forms/config.form.html.twig
+msgid "Blocked password reset requests"
+msgstr "Solicitudes de restablecimiento de contraseña bloqueadas"
+
+#: templates/forms/config.form.html.twig
+msgid "Select at least one row first."
+msgstr "Seleccione primero al menos una fila."
+
+#: templates/forms/config.form.html.twig
+msgid "Unlock the selected rows?"
+msgstr "¿Desbloquear las filas seleccionadas?"
+
+#: templates/forms/config.form.html.twig
+msgid "Unlock selected"
+msgstr "Desbloquear seleccionadas"
+
+#: templates/forms/config.form.html.twig
+msgid "Unlock every currently blocked entry?"
+msgstr "¿Desbloquear todas las entradas actualmente bloqueadas?"
+
+#: templates/forms/config.form.html.twig
+msgid "Unlock all"
+msgstr "Desbloquear todo"
+
+#: templates/forms/config.form.html.twig
+msgid "Blocked until"
+msgstr "Bloqueado hasta"
+
+#: templates/forms/config.form.html.twig
+msgid "Unblock"
+msgstr "Desbloquear"
+
+#: templates/forms/config.form.html.twig
+msgid ""
+"The REST API is enabled with login by credentials: logins made through it "
+"are not limited, blocked, geoblocked or recorded by this plugin. Disable "
+"\"Enable login with credentials\" in Setup > General > API, or use API "
+"tokens and restrict the API clients by IP."
+msgstr ""
+"La API REST está habilitada con inicio de sesión por credenciales: los "
+"accesos hechos por esa vía no son limitados, bloqueados, geobloqueados ni "
+"registrados por este plugin. Desactive «Habilitar inicio de sesión con "
+"credenciales» en Configuración > General > API, o use tokens de API y "
+"restrinja los clientes de API por IP."

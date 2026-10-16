@@ -1,32 +1,38 @@
 <?php
-/*
- -------------------------------------------------------------------------
- More Security plugin for GLPI
- Copyright (C) 2026 by the TICGAL Team.
- https://www.tic.gal
- -------------------------------------------------------------------------
- LICENSE
- This file is part of the More Security plugin.
- More Security plugin is free software; you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 3 of the License, or
- (at your option) any later version.
- More Security plugin is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
- You should have received a copy of the GNU General Public License
- along with More Security. If not, see <http://www.gnu.org/licenses/>.
- --------------------------------------------------------------------------
- @package   More Security
- @author    the TICGAL team
- @copyright Copyright (c) 2022-2026 TICGAL team
- @license   AGPL License 3.0 or (at your option) any later version
-            http://www.gnu.org/licenses/agpl-3.0-standalone.html
- @link      https://www.tic.gal
- @since     2022
- ----------------------------------------------------------------------
-*/
+
+/**
+ * -------------------------------------------------------------------------
+ * More Security plugin for GLPI
+ * Copyright (C) 2026 by the TICGAL Team.
+ * https://www.tic.gal
+ * -------------------------------------------------------------------------
+ * LICENSE
+ * This file is part of the More Security plugin.
+ * More Security plugin is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ * More Security plugin is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * You should have received a copy of the GNU General Public License
+ * along with More Security. If not, see <http://www.gnu.org/licenses/>.
+ * -------------------------------------------------------------------------
+ * @author    the TICGAL team
+ * @copyright Copyright (c) 2022-2026 TICGAL team
+ * @license   AGPL License 3.0 or (at your option) any later version
+ * @link      https://www.tic.gal
+ * @package   More Security
+ * @since     2022
+ *            http://www.gnu.org/licenses/agpl-3.0-standalone.html
+ * -------------------------------------------------------------------------
+ */
+
+use Safe\Exceptions\SafeExceptionInterface;
+
+use function Safe\inet_ntop;
+use function Safe\inet_pton;
 
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
@@ -90,6 +96,73 @@ class PluginMoresecurityLimiter
     public static function isPlainString(mixed $value, int $max = self::MAX_PASSWORD_LENGTH): bool
     {
         return is_string($value) && strlen($value) <= $max && !str_contains($value, "\0");
+    }
+
+    /**
+     * IP del solicitante: solo se confía en X-Forwarded-For cuando el par
+     * inmediato (REMOTE_ADDR) es un proxy inverso configurado por el
+     * administrador. Devuelve siempre una IPv4/IPv6 bien formada o '' (nunca
+     * un nombre de host ni basura que acabe en una columna `ip`).
+     */
+    public static function getClientIp(): string
+    {
+        $remote_addr = self::validIp((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+
+        $config  = PluginMoresecurityConfig::getInstance();
+        $proxies = self::parseList((string) ($config->fields['trusted_proxies'] ?? ''));
+        if ($remote_addr === '' || $proxies === [] || !in_array($remote_addr, $proxies, true)) {
+            return $remote_addr;
+        }
+
+        // La cadena la va ampliando cada proxy: se recorre de derecha a
+        // izquierda hasta el primer salto que no sea un proxy de confianza.
+        $chain = array_reverse(self::parseList((string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '')));
+        foreach ($chain as $candidate) {
+            if (filter_var($candidate, FILTER_VALIDATE_IP) === false) {
+                continue;
+            }
+            if (!in_array($candidate, $proxies, true)) {
+                return $candidate;
+            }
+        }
+
+        return $remote_addr;
+    }
+
+    /**
+     * Clave de los contadores para una IP: IPv4 tal cual; IPv6 reducida a su
+     * prefijo /64 (un solo suscriptor controla el /64 entero, así que contar
+     * por dirección completa permitiría rotar y saltarse los límites). Una
+     * clave ya reducida o una cadena no-IP se devuelve sin cambios.
+     */
+    public static function bucketIp(string $ip): string
+    {
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
+            return $ip;
+        }
+        try {
+            return inet_ntop(substr(inet_pton($ip), 0, 8) . str_repeat("\0", 8)) . '/64';
+        } catch (SafeExceptionInterface $e) {
+            return $ip;
+        }
+    }
+
+    /**
+     * @return string $ip sin cambios si es una IPv4/IPv6 válida, '' si no.
+     */
+    public static function validIp(string $ip): string
+    {
+        return filter_var($ip, FILTER_VALIDATE_IP) !== false ? $ip : '';
+    }
+
+    /**
+     * Lista separada por comas -> array sin vacíos ni espacios.
+     *
+     * @return string[]
+     */
+    public static function parseList(string $value): array
+    {
+        return array_values(array_filter(array_map('trim', explode(',', $value)), static fn($v) => $v !== ''));
     }
 
     /**

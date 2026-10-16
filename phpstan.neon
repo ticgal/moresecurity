@@ -1,0 +1,39 @@
+includes:
+    - ../../vendor/glpi-project/phpstan-glpi/extension.neon
+    - ../../vendor/phpstan/phpstan-deprecation-rules/rules.neon
+    - ../../vendor/thecodingmachine/phpstan-safe-rule/phpstan-safe-rule.neon
+
+parameters:
+    level: 5
+    paths:
+        - front
+        - inc
+        - hook.php
+        - setup.php
+    scanDirectories:
+        - ../../src
+        - vendor
+    bootstrapFiles:
+        - ../../stubs/glpi_constants.php
+        - ../../vendor/autoload.php
+        - setup.php
+    treatPhpDocTypesAsCertain: false
+    ignoreErrors:
+        # Login/password-reset scripts and the post_init gate must end the request
+        # themselves: they answer with a generic error page and stop before the
+        # core routes the request (see plugin_moresecurity_deny(): never).
+        -
+            identifier: glpi.forbidExit
+            paths:
+                - hook.php
+                - front/lostpassword.form.php
+        # Same reason: the gate runs in post_init, before any Symfony response
+        # exists, so the status code cannot be set on a Response object.
+        -
+            identifier: glpi.forbidHttpResponseCode
+            path: hook.php
+        # `die()` as GLPI's standard "direct access" guard at the top of every
+        # class file and as the install-time "table creation failed" abort.
+        -
+            identifier: glpi.forbidExit
+            path: inc/*.php

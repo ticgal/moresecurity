@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.3.0 - 15/10/2026
+### Features
+- Geoblocking: allow or deny logins by country, using DB-IP's free Lite database (monthly automatic action to refresh it)
+- Trusted reverse proxy IPs: the real client IP is taken from X-Forwarded-For only when the request comes from one of them
+- Security log page under Administration (per-attempt log and per-account/IP summary) with a dedicated read-only profile right
+- Dashboard cards for top attacking IPs, most targeted accounts and top offending countries, plus a default "More Security" dashboard
+- Bulk unblock (selected / all) of accounts, IPs and password reset requests
+- Automatic action purging old Security log entries daily (retention parameter, 30 days by default); at most 200 log entries per IP and hour
+- Galician (gl_ES) translation
+### Bugfix
+- The configuration tab warns when the REST API accepts login with credentials, a path this plugin does not protect
+- IPv6 addresses are counted per /64 prefix (IP blocking and distinct-IP detection could be evaded or abused by rotating addresses)
+- Login/reset counters no longer print the SQL error to anonymous clients if a write fails
+- Dashboard cards without data: "Top offending countries" no longer raises `Undefined array key "series"`, every card keeps its title and the "No data found" notice is smaller and muted
+- Dashboard card labels drop markup characters from attacker-supplied login names
+- GeoIP database update hardened: capped download, unique temporary files and the new file is validated as a country database before replacing the current one
+- Locale catalogues regenerated: most plugin strings were missing from the Spanish translation
+
 ## 2.2.2 - 05/10/2026
 ### Bugfix
 - Security audit 02/10/2026 (MS-01 to MS-11): login policy now also applies to authenticated sessions and runs only after a valid CSRF token
