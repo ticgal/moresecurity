@@ -1,32 +1,33 @@
 <?php
-/*
- -------------------------------------------------------------------------
- More Security plugin for GLPI
- Copyright (C) 2026 by the TICGAL Team.
- https://www.tic.gal
- -------------------------------------------------------------------------
- LICENSE
- This file is part of the More Security plugin.
- More Security plugin is free software; you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 3 of the License, or
- (at your option) any later version.
- More Security plugin is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
- You should have received a copy of the GNU General Public License
- along with More Security. If not, see <http://www.gnu.org/licenses/>.
- --------------------------------------------------------------------------
- @package   More Security
- @author    the TICGAL team
- @copyright Copyright (c) 2022-2026 TICGAL team
- @license   AGPL License 3.0 or (at your option) any later version
-            http://www.gnu.org/licenses/agpl-3.0-standalone.html
- @link      https://www.tic.gal
- @since     2022
- ----------------------------------------------------------------------
-*/
+
+/**
+ * -------------------------------------------------------------------------
+ * More Security plugin for GLPI
+ * Copyright (C) 2026 by the TICGAL Team.
+ * https://www.tic.gal
+ * -------------------------------------------------------------------------
+ * LICENSE
+ * This file is part of the More Security plugin.
+ * More Security plugin is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ * More Security plugin is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * You should have received a copy of the GNU General Public License
+ * along with More Security. If not, see <http://www.gnu.org/licenses/>.
+ * -------------------------------------------------------------------------
+ * @author    the TICGAL team
+ * @copyright Copyright (c) 2022-2026 TICGAL team
+ * @license   AGPL License 3.0 or (at your option) any later version
+ * @link      https://www.tic.gal
+ * @package   More Security
+ * @since     2022
+ *            http://www.gnu.org/licenses/agpl-3.0-standalone.html
+ * -------------------------------------------------------------------------
+ */
 
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
@@ -40,6 +41,10 @@ class PluginMoresecurityRetention extends CommonDBTM
 {
     public const RETENTION_DAYS = 7;
 
+    // Días que se conserva el registro de seguridad (parámetro de la acción
+    // automática "PurgeLogs", editable desde su ficha).
+    public const LOG_RETENTION_DAYS = 30;
+
     public static function getTypeName($nb = 0): string
     {
         return 'More Security';
@@ -47,9 +52,29 @@ class PluginMoresecurityRetention extends CommonDBTM
 
     public static function cronInfo($name): array
     {
+        if ($name === 'PurgeLogs') {
+            return [
+                'description' => __('Purge security logs based on retention policy', 'moresecurity'),
+                'parameter'   => __('Retention period (days)', 'moresecurity'),
+            ];
+        }
+
         return [
             'description' => __('Purge old login and password reset attempt records', 'moresecurity'),
         ];
+    }
+
+    /**
+     * @param CronTask $task
+     */
+    public static function cronPurgeLogs($task): int
+    {
+        $days  = max(1, (int) ($task->fields['param'] ?? self::LOG_RETENTION_DAYS));
+        $total = PluginMoresecurityAttemptLog::purge($days);
+
+        $task->addVolume($total);
+
+        return $total > 0 ? 1 : 0;
     }
 
     /**
@@ -102,6 +127,17 @@ class PluginMoresecurityRetention extends CommonDBTM
             [
                 'comment' => __('Purge old login and password reset attempt records', 'moresecurity'),
                 'mode'    => CronTask::MODE_INTERNAL,
+            ]
+        );
+
+        CronTask::register(
+            self::class,
+            'PurgeLogs',
+            DAY_TIMESTAMP,
+            [
+                'comment' => __('Purge security logs based on retention policy', 'moresecurity'),
+                'mode'    => CronTask::MODE_INTERNAL,
+                'param'   => self::LOG_RETENTION_DAYS,
             ]
         );
     }

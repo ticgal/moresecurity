@@ -22,6 +22,11 @@ extra action is needed from end users. Administrators configure the thresholds f
 - Distributed attack detection: blocks an account for a bounded time when attempts come from too many distinct IPs
 - Administrators can unblock accounts, IPs and password reset requests from the configuration tab
 - Daily automatic action that purges old attempt records
+- Geoblocking: allow or deny logins by country, using DB-IP's free Lite database
+- Trusted reverse proxy support, so the real client IP is used behind a proxy or load balancer
+- Security log (Administration > Security log) with every failed attempt, a per-account/IP summary and a dedicated read-only permission
+- Dashboard cards (top attacking IPs, most targeted accounts, top offending countries) and a ready-made "More Security" dashboard
+- Bulk unblock of accounts, IPs and password reset requests
 
 ### Configuration options
 All settings live on the **More Security** tab of **Setup > General**. A value of `0` on any
@@ -43,9 +48,21 @@ attempt-count field disables that particular protection. Block durations must be
   (within the 12 h window) the account is blocked for the backoff cap (one day by default). It
   works even if "Number of attempts" is 0.
 
-The client IP is always the direct connection address (`REMOTE_ADDR`). Behind a reverse proxy
-every client shares one budget: add the proxy to the whitelist only if you accept exempting all
-of its clients.
+By default the client IP is the direct connection address (`REMOTE_ADDR`). Behind a reverse proxy
+every client would share one budget: list the proxy under **Trusted reverse proxy IPs** and the
+`X-Forwarded-For` header is honoured, but only when the request comes from one of those proxies.
+Do not add the proxy to the whitelist unless you accept exempting all of its clients.
+
+#### Geoblocking
+- **Mode** — *Disabled*, *Only allow these countries* or *Block these countries*. Applies to logins
+  only; whitelisted IPs skip it. Denied logins are written to the Security log and do not consume
+  any attempt budget.
+- **Countries** — ISO 3166-1 countries the mode applies to.
+- Country data comes from DB-IP's free *IP to Country Lite* database (CC BY 4.0), downloaded into
+  the GLPI plugin documents folder by the monthly automatic action *updatedb*. Until it has been
+  downloaded, or for private, reserved and unresolvable addresses, geoblocking **fails open**: the
+  login is allowed through. Requires the `geoip2/geoip2` and `league/iso3166` libraries (shipped
+  with the release package; run `composer install` when working from a git checkout).
 
 #### Password reset attempts
 - **Attempts for Password Reset** — requests allowed per email address before it is blocked.
@@ -56,10 +73,35 @@ reset access without first getting their own IP blocked.
 
 #### Unblocking
 Currently blocked accounts, IPs and password reset requests are listed at the bottom of the
-configuration tab with an **Unblock** button (requires the `config` update right; every unblock is
-written to the configuration history). Blocks always expire on their own.
+configuration tab with an **Unblock** button, a checkbox for **Unlock selected** and an **Unlock
+all** button (requires the `config` update right; every unblock is written to the configuration
+history). Blocks always expire on their own.
+
+#### Security log
+**Administration > Security log** lists every failed login, every admitted password reset request
+and every geoblocked login, with type, login/email, matching user, IP and country. The **Summary**
+tab groups them by type, identifier and IP. Access is controlled by the *More Security > Security
+log* right of each profile; on installation it is granted (read) to the profiles that can already
+edit the GLPI configuration.
 
 #### Data retention
 The automatic action *Purge* (daily) removes attempt records inactive for more than 7 days that
-are not under an active block. Login names, emails and IPs are personal data: adjust the action
-frequency to your retention policy.
+are not under an active block. The automatic action *PurgeLogs* (daily) removes Security log
+entries older than its parameter (30 days by default). The log keeps at most 200 entries per IP and hour, so an attacker cannot inflate it; blocking decisions do not depend on the log. Login names, emails and IPs are personal
+data: adjust both actions to your retention policy.
+
+### Scope and limits
+- **Web login form only.** The protections (attempt limits, IP blocking, geoblocking) apply to the GLPI login and
+  password-reset forms. Logins through other channels (the legacy REST API `apirest.php/initSession` with
+  credentials, or the OAuth *password* grant of the High-Level API) do not go through the plugin and are not
+  counted or geoblocked. If you do not need them, disable *Enable login with credentials* in **Setup > General >
+  API** and use API tokens; otherwise apply geographic restrictions at your reverse proxy as well. The plugin's
+  configuration tab shows a warning while that API login is enabled.
+- **The Security log is global.** Attempts happen before a session and an entity exist, so the log and the
+  dashboard cards are not filtered by entity. Grant the *More Security > Security log* right (and the dashboard
+  cards, which require it) only to profiles that may see the logins, emails and IPs of the whole instance.
+- **Lockouts can be provoked.** Counters key on the identity typed in the form, whether or not it exists, so someone
+  who knows a login or email can trigger its temporary account lockout or reset block ("distinct IPs" detection makes
+  this easier by design). Keep block durations short (*Time blocked*, *Time reset*) and use the whitelist for trusted
+  networks. IPv6 addresses are counted per /64 prefix.
+

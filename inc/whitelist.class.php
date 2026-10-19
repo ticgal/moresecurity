@@ -1,13 +1,36 @@
 <?php
-/*
- -------------------------------------------------------------------------
- More Security plugin for GLPI
- Copyright (C) 2026 by the TICGAL Team.
- https://www.tic.gal
- -------------------------------------------------------------------------
- ...
- ----------------------------------------------------------------------
-*/
+
+/**
+ * -------------------------------------------------------------------------
+ * More Security plugin for GLPI
+ * Copyright (C) 2026 by the TICGAL Team.
+ * https://www.tic.gal
+ * -------------------------------------------------------------------------
+ * LICENSE
+ * This file is part of the More Security plugin.
+ * More Security plugin is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ * More Security plugin is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * You should have received a copy of the GNU General Public License
+ * along with More Security. If not, see <http://www.gnu.org/licenses/>.
+ * -------------------------------------------------------------------------
+ * @author    the TICGAL team
+ * @copyright Copyright (c) 2022-2026 TICGAL team
+ * @license   AGPL License 3.0 or (at your option) any later version
+ * @link      https://www.tic.gal
+ * @package   More Security
+ * @since     2022
+ *            http://www.gnu.org/licenses/agpl-3.0-standalone.html
+ * -------------------------------------------------------------------------
+ */
+
+use function Safe\inet_ntop;
+use function Safe\inet_pton;
 
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
@@ -131,6 +154,19 @@ class PluginMoresecurityWhitelist extends CommonDropdown
      * Valida una IP o un CIDR ("ip/prefijo") y la devuelve en forma
      * canónica, o null si no es válida. Soporta IPv4 e IPv6.
      */
+    /**
+     * inet_pton() sin avisos de PHP: null si no es una IPv4/IPv6 válida.
+     */
+    private static function pack(string $ip): ?string
+    {
+        $ip = trim($ip);
+        if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+            return null;
+        }
+
+        return inet_pton($ip);
+    }
+
     private static function normalizeIpOrCidr(string $value): ?string
     {
         $value = trim($value);
@@ -140,8 +176,8 @@ class PluginMoresecurityWhitelist extends CommonDropdown
 
         if (str_contains($value, '/')) {
             [$address, $prefix] = explode('/', $value, 2);
-            $packed = @inet_pton(trim($address));
-            if ($packed === false || !ctype_digit($prefix)) {
+            $packed = self::pack($address);
+            if ($packed === null || !ctype_digit($prefix)) {
                 return null;
             }
 
@@ -153,8 +189,8 @@ class PluginMoresecurityWhitelist extends CommonDropdown
             return inet_ntop($packed) . '/' . $prefix;
         }
 
-        $packed = @inet_pton($value);
-        if ($packed === false) {
+        $packed = self::pack($value);
+        if ($packed === null) {
             return null;
         }
 
@@ -202,8 +238,8 @@ class PluginMoresecurityWhitelist extends CommonDropdown
 
     public static function isWhitelisted(string $ip): bool
     {
-        $packed_ip = @inet_pton(trim($ip));
-        if ($packed_ip === false) {
+        $packed_ip = self::pack($ip);
+        if ($packed_ip === null) {
             return false;
         }
 
@@ -226,13 +262,13 @@ class PluginMoresecurityWhitelist extends CommonDropdown
         $entry_value = trim($entry_value);
 
         if (!str_contains($entry_value, '/')) {
-            $packed_entry = @inet_pton($entry_value);
-            return $packed_entry !== false && $packed_entry === $packed_ip;
+            $packed_entry = self::pack($entry_value);
+            return $packed_entry !== null && $packed_entry === $packed_ip;
         }
 
         [$network, $prefix] = explode('/', $entry_value, 2);
-        $packed_network = @inet_pton($network);
-        if ($packed_network === false || !ctype_digit($prefix)) {
+        $packed_network = self::pack($network);
+        if ($packed_network === null || !ctype_digit($prefix)) {
             return false;
         }
 

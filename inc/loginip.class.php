@@ -1,32 +1,33 @@
 <?php
-/*
- -------------------------------------------------------------------------
- More Security plugin for GLPI
- Copyright (C) 2026 by the TICGAL Team.
- https://www.tic.gal
- -------------------------------------------------------------------------
- LICENSE
- This file is part of the More Security plugin.
- More Security plugin is free software; you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 3 of the License, or
- (at your option) any later version.
- More Security plugin is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
- You should have received a copy of the GNU General Public License
- along with More Security. If not, see <http://www.gnu.org/licenses/>.
- --------------------------------------------------------------------------
- @package   More Security
- @author    the TICGAL team
- @copyright Copyright (c) 2022-2026 TICGAL team
- @license   AGPL License 3.0 or (at your option) any later version
-            http://www.gnu.org/licenses/agpl-3.0-standalone.html
- @link      https://www.tic.gal
- @since     2022
- ----------------------------------------------------------------------
-*/
+
+/**
+ * -------------------------------------------------------------------------
+ * More Security plugin for GLPI
+ * Copyright (C) 2026 by the TICGAL Team.
+ * https://www.tic.gal
+ * -------------------------------------------------------------------------
+ * LICENSE
+ * This file is part of the More Security plugin.
+ * More Security plugin is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ * More Security plugin is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * You should have received a copy of the GNU General Public License
+ * along with More Security. If not, see <http://www.gnu.org/licenses/>.
+ * -------------------------------------------------------------------------
+ * @author    the TICGAL team
+ * @copyright Copyright (c) 2022-2026 TICGAL team
+ * @license   AGPL License 3.0 or (at your option) any later version
+ * @link      https://www.tic.gal
+ * @package   More Security
+ * @since     2022
+ *            http://www.gnu.org/licenses/agpl-3.0-standalone.html
+ * -------------------------------------------------------------------------
+ */
 
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
@@ -38,7 +39,38 @@ class PluginMoresecurityLoginip extends CommonDBTM
 
     public static function isBlocked(string $ip): bool
     {
+        $ip = PluginMoresecurityLimiter::bucketIp($ip);
         return PluginMoresecurityLimiter::isBlockedNow(self::getTable(), ['ip' => $ip]);
+    }
+
+    /**
+     * Bloqueo por IP vigente Y activo en la configuración (con
+     * `ip_max_attempts` = 0 la protección está desactivada).
+     */
+    public static function isIpBlockActive(string $ip): bool
+    {
+        $ip = PluginMoresecurityLimiter::bucketIp($ip);
+        $config = PluginMoresecurityConfig::getInstance();
+
+        return (int) $config->fields['ip_max_attempts'] > 0 && self::isBlocked($ip);
+    }
+
+    /**
+     * Cuenta una denegación por geobloqueo contra el presupuesto de la IP
+     * (cubo anónimo, bajo el mismo bloqueo que reserve()).
+     */
+    public static function countGeoDenial(string $ip): void
+    {
+        $ip = PluginMoresecurityLimiter::bucketIp($ip);
+        $config = PluginMoresecurityConfig::getInstance();
+        if ((int) $config->fields['ip_max_attempts'] <= 0) {
+            return;
+        }
+
+        PluginMoresecurityLimiter::withLocks(['ip:' . PluginMoresecurityLimiter::bucketIp($ip)], static function () use ($ip): void {
+            self::addTry(PluginMoresecurityLimiter::ANON_BUCKET, $ip);
+            self::applyIpBlock($ip);
+        });
     }
 
     /**
@@ -48,6 +80,7 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function isOverflow(string $login, string $ip): bool
     {
+        $ip = PluginMoresecurityLimiter::bucketIp($ip);
         global $DB;
 
         $ip_q = DBmysql::quoteValue($ip);
@@ -70,6 +103,7 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function clearIpTryForLogin(string $login, string $ip): void
     {
+        $ip = PluginMoresecurityLimiter::bucketIp($ip);
         global $DB;
 
         $DB->update(self::getTable(), [
@@ -99,6 +133,7 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function unblock(string $ip): bool
     {
+        $ip = PluginMoresecurityLimiter::bucketIp($ip);
         global $DB;
 
         $DB->update(self::getTable(), [
@@ -125,6 +160,7 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function addTry(string $login, string $ip): void
     {
+        $ip = PluginMoresecurityLimiter::bucketIp($ip);
         global $DB;
 
         $table   = self::getTable();
@@ -138,7 +174,7 @@ class PluginMoresecurityLoginip extends CommonDBTM
                 `ip_try`   = IF($stale, 1, `ip_try` + 1),
                 `blocked`  = IF($stale, NULL, `blocked`),
                 `last_try` = NOW()"
-        ) or die($DB->error());
+        ) or throw new RuntimeException('More Security: could not record the attempt');
     }
 
     /**
@@ -148,6 +184,7 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function applyIpBlock(string $ip): void
     {
+        $ip = PluginMoresecurityLimiter::bucketIp($ip);
         global $DB;
 
         $config = PluginMoresecurityConfig::getInstance();

@@ -1,40 +1,50 @@
 {#
-# -------------------------------------------------------------------------
-# More Security plugin for GLPI
-# Copyright (C) 2024-2026 by the TICGAL Team.
-# https://www.tic.gal
-# -------------------------------------------------------------------------
-# LICENSE
-# This file is part of the More Security plugin.
-# More Security plugin is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; either version 3 of the License, or
-# (at your option) any later version.
-# More Security plugin is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-# You should have received a copy of the GNU General Public License
-# along with More Security. If not, see <http://www.gnu.org/licenses/>.
-# --------------------------------------------------------------------------
-# @package   More Security
-# @author    the TICgal team
-# @copyright Copyright (c) 2024-2026 TICGAL team
-# @license   AGPL License 3.0 or (at your option) any later version
-#                 http://www.gnu.org/licenses/agpl-3.0-standalone.html
-# @link      https://www.tic.gal
-# @since     2024
-# -------------------------------------------------------------------------
-#}
+ # -------------------------------------------------------------------------
+ # More Security plugin for GLPI
+ # Copyright (C) 2026 by the TICGAL Team.
+ # https://www.tic.gal
+ # -------------------------------------------------------------------------
+ # LICENSE
+ # This file is part of the More Security plugin.
+ # More Security plugin is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 3 of the License, or
+ # (at your option) any later version.
+ # More Security plugin is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ # You should have received a copy of the GNU General Public License
+ # along with More Security. If not, see <http://www.gnu.org/licenses/>.
+ # -------------------------------------------------------------------------
+ # @author    the TICGAL team
+ # @copyright Copyright (c) 2022-2026 TICGAL team
+ # @license   AGPL License 3.0 or (at your option) any later version
+ # @link      https://www.tic.gal
+ # @package   More Security
+ # @since     2022
+ #            http://www.gnu.org/licenses/agpl-3.0-standalone.html
+ # -------------------------------------------------------------------------
+ #}
 
 {% import 'components/form/fields_macros.html.twig' as fields %}
-{% import 'components/form/buttons.html.twig' as buttons %}
 
 {% if options is not defined %}
 {% set options = {} %}
 {% endif %}
 {# buttons.html.twig reads `params` directly: define it for strict-variables environments #}
 {% set params = params|default({}) %}
+
+{% if api_login_unprotected %}
+    <div class="alert alert-warning mb-3" role="alert" data-testid="ms-api-warning">
+        <div class="d-flex">
+            <i class="ti ti-alert-triangle fs-2 me-2"></i>
+            <div>
+                {{ __('The REST API is enabled with login by credentials: logins made through it are not limited, blocked, geoblocked or recorded by this plugin. Disable "Enable login with credentials" in Setup > General > API, or use API tokens and restrict the API clients by IP.', 'moresecurity') }}
+            </div>
+        </div>
+    </div>
+{% endif %}
 
 {{ include('components/form/header.html.twig', {'in_twig': true, 'no_header': true}) }}
 
@@ -134,6 +144,57 @@
         ) }}
     </div>
 
+    {# Trusted reverse proxies #}
+    <div class="row ps-4">
+        <h3>{{ __("Trusted proxies", 'moresecurity') }}</h3>
+        {{ fields.textField(
+            'trusted_proxies',
+            item.fields['trusted_proxies']|default(''),
+            __("Trusted reverse proxy IPs", 'moresecurity'),
+            options|merge({
+                'helper': __("Comma-separated (e.g. 10.0.0.1,10.0.0.2). X-Forwarded-For is only honoured when the request comes from one of these.", 'moresecurity'),
+            })
+        ) }}
+    </div>
+
+    {# Geoblocking #}
+    <div class="row ps-4" data-testid="ms-geoblocking-card">
+        <h3>{{ __("Geoblocking", 'moresecurity') }}</h3>
+        {{ fields.dropdownArrayField(
+            'geoblock_mode',
+            item.fields['geoblock_mode']|default('disabled'),
+            {
+                'disabled': __("Disabled", 'moresecurity'),
+                'allow': __("Only allow these countries", 'moresecurity'),
+                'deny': __("Block these countries", 'moresecurity'),
+            },
+            __("Mode", 'moresecurity'),
+            options
+        ) }}
+        {# Sent empty so deselecting every country clears the list #}
+        <input type="hidden" name="geoblock_countries[]" value="" />
+        {{ fields.dropdownArrayField(
+            'geoblock_countries',
+            '',
+            geoblock_country_choices,
+            __("Countries", 'moresecurity'),
+            options|merge({
+                'multiple': true,
+                'values': geoblock_countries_selected,
+            })
+        ) }}
+        {% if not geoip_database_ready %}
+            <p class="text-warning mt-2">
+                {{ __("The GeoIP database has not been downloaded yet. It is fetched by the \"updatedb\" automatic action; until then geoblocking lets every login through.", 'moresecurity') }}
+            </p>
+        {% endif %}
+        <p class="text-muted mt-2">
+            {{ __("IP geolocation data by", 'moresecurity') }}
+            <a href="https://db-ip.com" target="_blank" rel="noopener">DB-IP</a>
+            ({{ __("CC BY 4.0", 'moresecurity') }})
+        </p>
+    </div>
+
 </div>
 
 {{ include('components/form/buttons.html.twig') }}
@@ -143,39 +204,79 @@
     {'key': 'ips', 'type': 'ip', 'field': 'ip', 'title': __('Blocked IPs', 'moresecurity')},
     {'key': 'emails', 'type': 'email', 'field': 'email', 'title': __('Blocked password reset requests', 'moresecurity')},
 ] %}
-{% for section in blocked_sections %}
-    {% set rows = blocked[section.key]|default([]) %}
-    {% if rows|length > 0 %}
-        <div class="row ps-4 mt-4">
-            <h3>{{ section.title }}</h3>
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>{{ __('Name') }}</th>
-                        <th>{{ __('Blocked until', 'moresecurity') }}</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for row in rows %}
-                    <tr>
-                        <td>{{ row[section.field] }}</td>
-                        <td>{{ row.blocked }}</td>
-                        <td class="text-end">
-                            <form method="post" action="{{ path('/plugins/moresecurity/front/config.form.php') }}">
-                                <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
-                                <input type="hidden" name="unblock_type" value="{{ section.type }}" />
-                                <input type="hidden" name="unblock_value" value="{{ row[section.field] }}" />
-                                <button type="submit" name="unblock" value="1" class="btn btn-sm btn-outline-danger">
+{% set has_blocked = (blocked.accounts|default([])|length + blocked.ips|default([])|length + blocked.emails|default([])|length) > 0 %}
+{% if has_blocked %}
+<form method="post" action="{{ path('/plugins/moresecurity/front/config.form.php') }}" id="ms-active-blocks">
+    <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
+    {% for section in blocked_sections %}
+        {% for row in blocked[section.key]|default([]) %}
+            <input type="hidden" name="unblock_all_items[]" value="{{ section.type ~ '|' ~ row[section.field] }}" />
+        {% endfor %}
+    {% endfor %}
+
+    <div class="d-flex justify-content-end gap-2 mt-4 mb-2">
+        <button type="submit" name="unblock_selected" value="1" class="btn btn-outline-secondary btn-sm"
+            data-confirm="{{ __('Unlock the selected rows?', 'moresecurity') }}"
+            data-empty="{{ __('Select at least one row first.', 'moresecurity') }}">
+            {{ __("Unlock selected", 'moresecurity') }}
+        </button>
+        <button type="submit" name="unblock_all" value="1" class="btn btn-outline-secondary btn-sm"
+            data-confirm="{{ __('Unlock every currently blocked entry?', 'moresecurity') }}">
+            {{ __("Unlock all", 'moresecurity') }}
+        </button>
+    </div>
+
+    {% for section in blocked_sections %}
+        {% set rows = blocked[section.key]|default([]) %}
+        {% if rows|length > 0 %}
+            <div class="row ps-4 mt-4">
+                <h3>{{ section.title }}</h3>
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th>{{ __('Name') }}</th>
+                            <th>{{ __('Blocked until', 'moresecurity') }}</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for row in rows %}
+                        <tr>
+                            <td>
+                                <input type="checkbox" class="form-check-input ms-unblock-checkbox"
+                                       name="unblock_items[]" value="{{ section.type ~ '|' ~ row[section.field] }}" />
+                            </td>
+                            <td>{{ row[section.field] }}</td>
+                            <td>{{ row.blocked }}</td>
+                            <td class="text-end">
+                                <button type="submit" name="unblock_item" value="{{ section.type ~ '|' ~ row[section.field] }}" class="btn btn-sm btn-outline-danger">
                                     <i class="ti ti-lock-open"></i>
                                     <span>{{ __('Unblock', 'moresecurity') }}</span>
                                 </button>
-                            </form>
-                        </td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    {% endif %}
-{% endfor %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    {% endfor %}
+</form>
+{% endif %}
+
+<script>
+    document.querySelectorAll('#ms-active-blocks button[data-confirm]').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+            var form = btn.closest('form');
+            if (btn.dataset.empty && !form.querySelector('.ms-unblock-checkbox:checked')) {
+                alert(btn.dataset.empty);
+                e.preventDefault();
+                return;
+            }
+            if (!confirm(btn.dataset.confirm)) {
+                e.preventDefault();
+            }
+        });
+    });
+</script>
