@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.3.0 - 15/10/2026
+## 2.3.0 - 19/10/2026
 ### Features
 - Geoblocking: allow or deny logins by country, using DB-IP's free Lite database (monthly automatic action to refresh it)
 - Trusted reverse proxy IPs: the real client IP is taken from X-Forwarded-For only when the request comes from one of them
