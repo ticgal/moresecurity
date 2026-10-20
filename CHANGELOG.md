@@ -7,8 +7,8 @@
 - Security log page under Administration (per-attempt log and per-account/IP summary) with a dedicated read-only profile right
 - Dashboard cards for top attacking IPs, most targeted accounts and top offending countries, plus a default "More Security" dashboard
 - Bulk unblock (selected / all) of accounts, IPs and password reset requests
+- "Active blocks" card in the configuration tab: a single always-visible table (type, user, login, email, IP, blocked at, remaining) with column filters, sorting and pagination; "Unlock all" applies only to the filtered rows
 - Automatic action purging old Security log entries daily (retention parameter, 30 days by default); at most 200 log entries per IP and hour
-- Galician (gl_ES) translation
 ### Bugfix
 - The configuration tab warns when the REST API accepts login with credentials, a path this plugin does not protect
 - IPv6 addresses are counted per /64 prefix (IP blocking and distinct-IP detection could be evaded or abused by rotating addresses)

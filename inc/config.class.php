@@ -138,6 +138,20 @@ class PluginMoresecurityConfig extends CommonDBTM
 
         $config = self::getInstance();
 
+        $filters = [];
+        foreach ((array) ($_GET['filters'] ?? []) as $col => $value) {
+            if (is_string($col) && is_string($value) && $value !== '') {
+                $filters[$col] = mb_substr($value, 0, 255);
+            }
+        }
+        $blocks = self::getActiveBlocks(
+            $filters,
+            is_string($_GET['sort'] ?? null) ? $_GET['sort'] : null,
+            ($_GET['order'] ?? 'ASC') === 'DESC' ? 'DESC' : 'ASC',
+            max(1, (int) ($_SESSION['glpilist_limit'] ?? 15)),
+            max(0, (int) ($_GET['start'] ?? 0))
+        );
+
         $template = "@moresecurity/forms/config.form.html.twig";
         TemplateRenderer::getInstance()->display($template, [
             'item' => $config,
@@ -146,11 +160,16 @@ class PluginMoresecurityConfig extends CommonDBTM
             'geoip_database_ready'        => file_exists(PluginMoresecurityGeoip::getDatabasePath()),
             // El login por credenciales de la API REST no pasa por el plugin.
             'api_login_unprotected'       => !empty($CFG_GLPI['enable_api']) && !empty($CFG_GLPI['enable_api_login_credentials']),
-            'blocked' => [
-                'accounts' => PluginMoresecurityLogin::getBlocked(),
-                'ips'      => PluginMoresecurityLoginip::getBlocked(),
-                'emails'   => PluginMoresecurityLostpassword::getBlocked(),
-            ],
+            'blocked_filters'  => $blocks['filters'],
+            'blocked_filter_query' => http_build_query(['filters' => $blocks['filters']]),
+            'blocked_sort'     => $blocks['sort'],
+            'blocked_order'    => $blocks['order'],
+            'blocked_start'    => $blocks['start'],
+            'blocked_limit'    => $blocks['limit'],
+            'all_blocked'      => $blocks['entries'],
+            'all_blocked_total'  => $blocks['total'],
+            'blocked_filtered_number' => $blocks['filtered'],
+            'blocked_filtered_keys'   => $blocks['keys'],
             'options' => [
                 'full_width' => true,
             ],
@@ -241,6 +260,143 @@ class PluginMoresecurityConfig extends CommonDBTM
         }
 
         return $input;
+    }
+
+    /**
+     * Bloqueos vigentes de cuentas, IPs y correos de recuperación unificados
+     * en una sola lista filtrable, ordenable y paginada ("Active blocks").
+     * Los tres orígenes están acotados (100 filas cada uno), así que filtrar,
+     * ordenar y paginar en PHP es barato y deja el total y las claves de
+     * "Desbloquear todos" coherentes con el filtro aplicado.
+     *
+     * @param array<string, string> $filters subcadena por columna visible
+     * @return array{entries: array, total: int, filtered: int, keys: string[], filters: array, sort: ?string, order: string, start: int, limit: int}
+     */
+    public static function getActiveBlocks(array $filters, ?string $sort, string $order, int $limit, int $start): array
+    {
+        $labels = PluginMoresecurityAttemptLog::getTypeLabels();
+        $rows   = [];
+
+        foreach (PluginMoresecurityLogin::getBlocked() as $row) {
+            $rows[] = self::mapBlockRow('account', PluginMoresecurityAttemptLog::EVENT_LOGIN, $labels, $row, 'login', 'login');
+        }
+        foreach (PluginMoresecurityLoginip::getBlocked() as $row) {
+            $rows[] = self::mapBlockRow('ip', PluginMoresecurityAttemptLog::EVENT_LOGIN_IP, $labels, $row, 'ip', 'ip');
+        }
+        foreach (PluginMoresecurityLostpassword::getBlocked() as $row) {
+            $rows[] = self::mapBlockRow('email', PluginMoresecurityAttemptLog::EVENT_RESET_EMAIL, $labels, $row, 'email', 'email');
+        }
+        $total = count($rows);
+
+        $rows = array_values(array_filter($rows, static function (array $row) use ($filters): bool {
+            foreach ($filters as $col => $needle) {
+                if (!array_key_exists($col, $row['text'])) {
+                    continue;
+                }
+                if (!str_contains(mb_strtolower($row['text'][$col]), mb_strtolower($needle))) {
+                    return false;
+                }
+            }
+            return true;
+        }));
+
+        $sortable = ['type', 'user', 'login', 'email', 'ip', 'blocked_at', 'remaining'];
+        if ($sort === null || !in_array($sort, $sortable, true)) {
+            $sort = null;
+        }
+        $key = $sort === null ? 'remaining' : $sort;
+        usort($rows, static function (array $a, array $b) use ($key, $sort, $order): int {
+            $cmp = ($a['sort'][$key] ?? '') <=> ($b['sort'][$key] ?? '');
+            return $sort !== null && $order === 'DESC' ? -$cmp : $cmp;
+        });
+
+        $filtered = count($rows);
+        $keys     = array_column($rows, 'key');
+        $start    = $start >= $filtered ? 0 : $start;
+
+        $entries = [];
+        foreach (array_slice($rows, $start, $limit) as $row) {
+            $entries[] = $row['display'];
+        }
+
+        return [
+            'entries'  => $entries,
+            'total'    => $total,
+            'filtered' => $filtered,
+            'keys'     => $keys,
+            'filters'  => $filters,
+            'sort'     => $sort,
+            'order'    => $order,
+            'start'    => $start,
+            'limit'    => $limit,
+        ];
+    }
+
+    /**
+     * Una fila de bloqueo en forma de visualización: `display` (lo que pinta
+     * la tabla), `text` (valores planos para filtrar), `sort` (valores
+     * crudos para ordenar) y `key` ("tipo|valor", como espera unblock()).
+     *
+     * @param array<string, string> $labels
+     * @param array<string, mixed>  $row
+     * @return array{key: string, display: array<string, string>, text: array<string, string>, sort: array<string, mixed>}
+     */
+    private static function mapBlockRow(string $type, string $event, array $labels, array $row, string $field, string $kind): array
+    {
+        $value    = (string) $row[$field];
+        $key      = $type . '|' . $value;
+        $login    = $kind === 'login' ? $value : '';
+        $email    = $kind === 'email' ? $value : '';
+        $ip       = $kind === 'ip' ? $value : '';
+        // Segundos restantes calculados por la base de datos (la misma que decide
+        // el bloqueo): PHP y MariaDB pueden tener zonas horarias distintas.
+        $seconds  = $row['remaining'] !== null ? (int) $row['remaining'] : null;
+        $last_try = $row['last_try'] !== null ? (string) $row['last_try'] : '';
+
+        $user_name = '';
+        $user_html = '';
+        if ($kind !== 'ip') {
+            $user = new User();
+            $found = $kind === 'login' ? $user->getFromDBbyName($value) : $user->getFromDBbyEmail($value);
+            if ($found) {
+                $user_name = (string) $user->fields['name'];
+                $user_html = '<a href="' . htmlescape(User::getFormURLWithID((int) $user->fields['id'])) . '">'
+                    . htmlescape($user_name) . '</a>';
+            }
+        }
+
+        $remaining = '';
+        if ($seconds !== null) {
+            $remaining = $seconds > 0 ? Html::timestampToString($seconds) : __('Expired', 'moresecurity');
+        }
+        $blocked_at = $last_try !== '' ? Html::convDateTime($last_try) : '';
+        $type_label = $labels[$event] ?? $event;
+
+        return [
+            'key'     => $key,
+            'display' => [
+                'select'     => '<input type="checkbox" class="form-check-input ms-unblock-checkbox" name="unblock_items[]" value="'
+                    . htmlescape($key) . '" />',
+                'type'       => $type_label,
+                'user'       => $user_html,
+                'login'      => $login,
+                'email'      => $email,
+                'ip'         => $ip,
+                'blocked_at' => $blocked_at,
+                'remaining'  => $remaining,
+                'action'     => '<button type="submit" name="unblock_item" value="' . htmlescape($key)
+                    . '" class="btn btn-sm btn-outline-danger"><i class="ti ti-lock-open"></i> '
+                    . htmlescape(__('Unblock', 'moresecurity')) . '</button>',
+            ],
+            'text'    => [
+                'type' => $type_label, 'user' => $user_name, 'login' => $login, 'email' => $email,
+                'ip' => $ip, 'blocked_at' => $blocked_at, 'remaining' => $remaining,
+            ],
+            'sort'    => [
+                'type' => $type_label, 'user' => $user_name, 'login' => $login, 'email' => $email,
+                'ip' => $ip, 'blocked_at' => $last_try, 'remaining' => $seconds ?? 0,
+            ],
+        ];
     }
 
     /**

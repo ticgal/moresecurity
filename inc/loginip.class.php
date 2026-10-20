@@ -148,7 +148,7 @@ class PluginMoresecurityLoginip extends CommonDBTM
     public static function getBlocked(int $limit = 100): array
     {
         return PluginMoresecurityLimiter::fetchAll(
-            "SELECT `ip`, MAX(`blocked`) AS blocked FROM " . DBmysql::quoteName(self::getTable()) . "
+            "SELECT `ip`, MAX(`blocked`) AS blocked, MAX(`last_try`) AS last_try, TIMESTAMPDIFF(SECOND, NOW(), MAX(`blocked`)) AS remaining FROM " . DBmysql::quoteName(self::getTable()) . "
              WHERE `blocked` IS NOT NULL AND `blocked` > NOW() GROUP BY `ip` ORDER BY blocked DESC LIMIT " . (int) $limit
         );
     }
