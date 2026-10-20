@@ -48,15 +48,29 @@
 
 {{ include('components/form/header.html.twig', {'in_twig': true, 'no_header': true}) }}
 
-<div class="row">
+{% macro ribbon_header(title, icon = 'ti-shield-plus') %}
+    <div class="ribbon ribbon-bookmark ribbon-top ribbon-start bg-blue s-1">
+        <i class="ti {{ icon }} fa-2x"></i>
+    </div>
+    <h4 class="card-title ps-5">{{ title }}</h4>
+{% endmacro %}
+
+{# Dos columnas: etiquetas más estrechas para que los campos no se partan #}
+{% set half_options = options|merge({'full_width': false, 'field_class': 'col-12', 'label_class': 'col-5', 'input_class': 'col-7'}) %}
+<div class="row pt-3">
+    <div class="col-12 col-xl-6 mb-4">
     {# Login attempts #}
-    <div class="row ps-4">
-        <h3>{{ __("Login attempts", 'moresecurity') }}</h3>
+    <div class="card m-n2 border-0 shadow-none">
+        <div class="card-header">
+            {{ _self.ribbon_header(__("Login attempts", 'moresecurity'), 'ti-shield-plus') }}
+        </div>
+        <div class="card-body">
+            <div class="row">
         {{ fields.numberField(
             'number_attempts',
             item.fields['number_attempts'],
             __("Number of attempts", 'moresecurity'),
-            options|merge({
+            half_options|merge({
                 'min': 0,
                 'max': 100,
                 'step': 1
@@ -66,7 +80,7 @@
             'time_blocked',
             item.fields['time_blocked'],
             __("Access time blocked", 'moresecurity'),
-            options|merge({
+            half_options|merge({
                 'display_emptychoice': false,
             })
         ) }}
@@ -74,15 +88,53 @@
             'max_time_blocked',
             item.fields['max_time_blocked'],
             __("Max access time blocked (backoff cap)", 'moresecurity'),
-            options|merge({
+            half_options|merge({
                 'display_emptychoice': false,
             })
         ) }}
+            </div>
+        </div>
+    </div>
+    </div>
+    <div class="col-12 col-xl-6 mb-4">
+    {# Password reset #}
+    <div class="card m-n2 border-0 shadow-none">
+        <div class="card-header">
+            {{ _self.ribbon_header(__("Password reset attempts", 'moresecurity'), 'ti-shield-plus') }}
+        </div>
+        <div class="card-body">
+            <div class="row">
+        {{ fields.numberField(
+            'attempts_reset',
+            item.fields['attempts_reset'],
+            __("Attempts for Password Reset", 'moresecurity'),
+            half_options|merge({
+                'min': 0,
+                'max': 100,
+                'step': 1
+            })
+        ) }}
+        {{ fields.dropdownTimestampField(
+            'time_reset',
+            item.fields['time_reset'],
+            __("Access time blocked for Password Reset", 'moresecurity'),
+            half_options|merge({
+                'display_emptychoice': false,
+            })
+        ) }}
+            </div>
+        </div>
+    </div>
     </div>
 
     {# IP blocking #}
-    <div class="row ps-4">
-        <h3>{{ __("IP blocking", 'moresecurity') }}</h3>
+    <div class="col-12 mb-4">
+    <div class="card m-n2 border-0 shadow-none">
+        <div class="card-header">
+            {{ _self.ribbon_header(__("IP blocking", 'moresecurity'), 'ti-shield-down') }}
+        </div>
+        <div class="card-body">
+            <div class="row">
         {{ fields.numberField(
             'ip_max_attempts',
             item.fields['ip_max_attempts'],
@@ -119,34 +171,78 @@
                 'step': 1
             })
         ) }}
+            </div>
+        </div>
+    </div>
     </div>
 
-    {# Password reset #}
-    <div class="row ps-4">
-        <h3>{{ __("Password reset attempts", 'moresecurity') }}</h3>
-        {{ fields.numberField(
-            'attempts_reset',
-            item.fields['attempts_reset'],
-            __("Attempts for Password Reset", 'moresecurity'),
-            options|merge({
-                'min': 0,
-                'max': 100,
-                'step': 1
-            })
-        ) }}
-        {{ fields.dropdownTimestampField(
-            'time_reset',
-            item.fields['time_reset'],
-            __("Access time blocked for Password Reset", 'moresecurity'),
-            options|merge({
-                'display_emptychoice': false,
-            })
-        ) }}
+{# Bloqueos vigentes: tarjeta única con filtros, orden y paginación #}
+<div id="ms-active-blocks-card" class="row mt-4 mb-4" data-testid="ms-active-blocks">
+    <div class="col-12">
+        <div class="card m-n2 border-0 shadow-none">
+            <div class="card-header">
+                {{ _self.ribbon_header(__('Active blocks', 'moresecurity'), 'ti-shield-cancel') }}
+            </div>
+            <div class="card-body">
+                <p class="text-muted">
+                    {{ __('Every currently blocked account, IP, or email. Lift one early with Unblock, or select several and unlock them together.', 'moresecurity') }}
+                </p>
+                {% for key in blocked_filtered_keys %}
+                    <input type="hidden" name="unblock_all_items[]" value="{{ key }}" />
+                {% endfor %}
+                <div class="d-flex justify-content-end gap-2 mb-2">
+                    <button type="submit" name="unblock_selected" value="1" class="btn btn-outline-secondary btn-sm"
+                        data-confirm="{{ __('Unlock the selected rows?', 'moresecurity') }}"
+                        data-empty="{{ __('Select at least one row first.', 'moresecurity') }}">
+                        {{ __('Unlock selected', 'moresecurity') }}
+                    </button>
+                    <button type="submit" name="unblock_all" value="1" class="btn btn-outline-secondary btn-sm"
+                        data-confirm="{{ __('Unlock every currently visible/filtered row?', 'moresecurity') }}">
+                        {{ __('Unlock all', 'moresecurity') }}
+                    </button>
+                </div>
+                {{ include('components/datatable.html.twig', {
+                    'filters': blocked_filters,
+                    'sort': blocked_sort,
+                    'order': blocked_order,
+                    'start': blocked_start,
+                    'is_tab': true,
+                    'items_id': item.fields['id']|default(0),
+                    'additional_params': blocked_filter_query,
+                    'limit': blocked_limit,
+                    'columns': {
+                        'select': {'label': '', 'no_filter': true, 'nosort': true},
+                        'type': __('Type', 'moresecurity'),
+                        'user': __('User', 'moresecurity'),
+                        'login': __('Login', 'moresecurity'),
+                        'email': __('Email', 'moresecurity'),
+                        'ip': __('IP', 'moresecurity'),
+                        'blocked_at': __('Blocked at', 'moresecurity'),
+                        'remaining': __('Remaining', 'moresecurity'),
+                        'action': {'label': '', 'no_filter': true, 'nosort': true},
+                    },
+                    'formatters': {
+                        'select': 'raw_html',
+                        'user': 'raw_html',
+                        'action': 'raw_html',
+                    },
+                    'entries': all_blocked,
+                    'total_number': all_blocked_total,
+                    'filtered_number': blocked_filtered_number,
+                }) }}
+            </div>
+        </div>
     </div>
+</div>
 
     {# Trusted reverse proxies #}
-    <div class="row ps-4">
-        <h3>{{ __("Trusted proxies", 'moresecurity') }}</h3>
+    <div class="col-12 mb-4">
+    <div class="card m-n2 border-0 shadow-none">
+        <div class="card-header">
+            {{ _self.ribbon_header(__("Trusted proxies", 'moresecurity'), 'ti-server') }}
+        </div>
+        <div class="card-body">
+            <div class="row">
         {{ fields.textField(
             'trusted_proxies',
             item.fields['trusted_proxies']|default(''),
@@ -155,11 +251,19 @@
                 'helper': __("Comma-separated (e.g. 10.0.0.1,10.0.0.2). X-Forwarded-For is only honoured when the request comes from one of these.", 'moresecurity'),
             })
         ) }}
+            </div>
+        </div>
+    </div>
     </div>
 
     {# Geoblocking #}
-    <div class="row ps-4" data-testid="ms-geoblocking-card">
-        <h3>{{ __("Geoblocking", 'moresecurity') }}</h3>
+    <div class="col-12 mb-4">
+    <div class="card m-n2 border-0 shadow-none" data-testid="ms-geoblocking-card">
+        <div class="card-header">
+            {{ _self.ribbon_header(__("Geoblocking", 'moresecurity'), 'ti-world') }}
+        </div>
+        <div class="card-body">
+            <div class="row">
         {{ fields.dropdownArrayField(
             'geoblock_mode',
             item.fields['geoblock_mode']|default('disabled'),
@@ -193,80 +297,51 @@
             <a href="https://db-ip.com" target="_blank" rel="noopener">DB-IP</a>
             ({{ __("CC BY 4.0", 'moresecurity') }})
         </p>
+            </div>
+        </div>
+    </div>
     </div>
 
 </div>
 
+
 {{ include('components/form/buttons.html.twig') }}
 
-{% set blocked_sections = [
-    {'key': 'accounts', 'type': 'account', 'field': 'login', 'title': __('Blocked accounts', 'moresecurity')},
-    {'key': 'ips', 'type': 'ip', 'field': 'ip', 'title': __('Blocked IPs', 'moresecurity')},
-    {'key': 'emails', 'type': 'email', 'field': 'email', 'title': __('Blocked password reset requests', 'moresecurity')},
-] %}
-{% set has_blocked = (blocked.accounts|default([])|length + blocked.ips|default([])|length + blocked.emails|default([])|length) > 0 %}
-{% if has_blocked %}
-<form method="post" action="{{ path('/plugins/moresecurity/front/config.form.php') }}" id="ms-active-blocks">
-    <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
-    {% for section in blocked_sections %}
-        {% for row in blocked[section.key]|default([]) %}
-            <input type="hidden" name="unblock_all_items[]" value="{{ section.type ~ '|' ~ row[section.field] }}" />
-        {% endfor %}
-    {% endfor %}
-
-    <div class="d-flex justify-content-end gap-2 mt-4 mb-2">
-        <button type="submit" name="unblock_selected" value="1" class="btn btn-outline-secondary btn-sm"
-            data-confirm="{{ __('Unlock the selected rows?', 'moresecurity') }}"
-            data-empty="{{ __('Select at least one row first.', 'moresecurity') }}">
-            {{ __("Unlock selected", 'moresecurity') }}
-        </button>
-        <button type="submit" name="unblock_all" value="1" class="btn btn-outline-secondary btn-sm"
-            data-confirm="{{ __('Unlock every currently blocked entry?', 'moresecurity') }}">
-            {{ __("Unlock all", 'moresecurity') }}
-        </button>
-    </div>
-
-    {% for section in blocked_sections %}
-        {% set rows = blocked[section.key]|default([]) %}
-        {% if rows|length > 0 %}
-            <div class="row ps-4 mt-4">
-                <h3>{{ section.title }}</h3>
-                <table class="table table-sm">
-                    <thead>
-                        <tr>
-                            <th></th>
-                            <th>{{ __('Name') }}</th>
-                            <th>{{ __('Blocked until', 'moresecurity') }}</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    {% for row in rows %}
-                        <tr>
-                            <td>
-                                <input type="checkbox" class="form-check-input ms-unblock-checkbox"
-                                       name="unblock_items[]" value="{{ section.type ~ '|' ~ row[section.field] }}" />
-                            </td>
-                            <td>{{ row[section.field] }}</td>
-                            <td>{{ row.blocked }}</td>
-                            <td class="text-end">
-                                <button type="submit" name="unblock_item" value="{{ section.type ~ '|' ~ row[section.field] }}" class="btn btn-sm btn-outline-danger">
-                                    <i class="ti ti-lock-open"></i>
-                                    <span>{{ __('Unblock', 'moresecurity') }}</span>
-                                </button>
-                            </td>
-                        </tr>
-                    {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        {% endif %}
-    {% endfor %}
-</form>
-{% endif %}
-
 <script>
-    document.querySelectorAll('#ms-active-blocks button[data-confirm]').forEach(function (btn) {
+    (function () {
+        var card = document.getElementById('ms-active-blocks-card');
+        if (!card) {
+            return;
+        }
+        // Los manejadores del botón "Filtrar" de GLPI solo existen en la pestaña
+        // de historial: aquí se recarga la pestaña con los filtros indicados.
+        function filterQuery() {
+            var parts = [];
+            card.querySelectorAll('.filter_row [name^="filters["]').forEach(function (input) {
+                if (input.value !== '') {
+                    parts.push(encodeURIComponent(input.name) + '=' + encodeURIComponent(input.value));
+                }
+            });
+            return parts.join('&');
+        }
+        var toggle = card.querySelector('.show_filters');
+        if (toggle) {
+            toggle.addEventListener('click', function (e) {
+                e.preventDefault();
+                reloadTab(card.querySelector('.filter_row') ? '' : 'filters[active]=1');
+            });
+        }
+        card.querySelectorAll('.filter_row input[type="text"]').forEach(function (input) {
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    reloadTab(filterQuery());
+                }
+            });
+        });
+    })();
+
+    document.querySelectorAll('#ms-active-blocks-card button[data-confirm]').forEach(function (btn) {
         btn.addEventListener('click', function (e) {
             var form = btn.closest('form');
             if (btn.dataset.empty && !form.querySelector('.ms-unblock-checkbox:checked')) {

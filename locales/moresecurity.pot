@@ -320,3 +320,35 @@ msgid ""
 "\"Enable login with credentials\" in Setup > General > API, or use API "
 "tokens and restrict the API clients by IP."
 msgstr ""
+
+#: templates/forms/config.form.html.twig
+msgid "Active blocks"
+msgstr ""
+
+#: templates/forms/config.form.html.twig
+msgid "Every currently blocked account, IP, or email. Lift one early with Unblock, or select several and unlock them together."
+msgstr ""
+
+#: templates/forms/config.form.html.twig
+msgid "Unlock every currently visible/filtered row?"
+msgstr ""
+
+#: templates/forms/config.form.html.twig
+msgid "User"
+msgstr ""
+
+#: templates/forms/config.form.html.twig
+msgid "IP"
+msgstr ""
+
+#: templates/forms/config.form.html.twig
+msgid "Blocked at"
+msgstr ""
+
+#: templates/forms/config.form.html.twig
+msgid "Remaining"
+msgstr ""
+
+#: templates/forms/config.form.html.twig
+msgid "Expired"
+msgstr ""

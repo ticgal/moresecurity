@@ -164,7 +164,7 @@ class PluginMoresecurityLostpassword extends CommonDBTM
     public static function getBlocked(int $limit = 100): array
     {
         return PluginMoresecurityLimiter::fetchAll(
-            "SELECT `email`, `email_try`, `blocked` FROM " . DBmysql::quoteName(self::getTable()) . "
+            "SELECT `email`, `email_try`, `blocked`, `last_try`, TIMESTAMPDIFF(SECOND, NOW(), `blocked`) AS remaining FROM " . DBmysql::quoteName(self::getTable()) . "
 			 WHERE `blocked` IS NOT NULL AND `blocked` > NOW() ORDER BY `blocked` DESC LIMIT " . (int) $limit
         );
     }

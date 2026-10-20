@@ -333,3 +333,35 @@ msgstr ""
 "are not limited, blocked, geoblocked or recorded by this plugin. Disable "
 "\"Enable login with credentials\" in Setup > General > API, or use API "
 "tokens and restrict the API clients by IP."
+
+#: templates/forms/config.form.html.twig
+msgid "Active blocks"
+msgstr "Active blocks"
+
+#: templates/forms/config.form.html.twig
+msgid "Every currently blocked account, IP, or email. Lift one early with Unblock, or select several and unlock them together."
+msgstr "Every currently blocked account, IP, or email. Lift one early with Unblock, or select several and unlock them together."
+
+#: templates/forms/config.form.html.twig
+msgid "Unlock every currently visible/filtered row?"
+msgstr "Unlock every currently visible/filtered row?"
+
+#: templates/forms/config.form.html.twig
+msgid "User"
+msgstr "User"
+
+#: templates/forms/config.form.html.twig
+msgid "IP"
+msgstr "IP"
+
+#: templates/forms/config.form.html.twig
+msgid "Blocked at"
+msgstr "Blocked at"
+
+#: templates/forms/config.form.html.twig
+msgid "Remaining"
+msgstr "Remaining"
+
+#: templates/forms/config.form.html.twig
+msgid "Expired"
+msgstr "Expired"

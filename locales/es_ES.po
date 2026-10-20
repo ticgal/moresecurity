@@ -344,3 +344,35 @@ msgstr ""
 "registrados por este plugin. Desactive «Habilitar inicio de sesión con "
 "credenciales» en Configuración > General > API, o use tokens de API y "
 "restrinja los clientes de API por IP."
+
+#: templates/forms/config.form.html.twig
+msgid "Active blocks"
+msgstr "Bloqueos activos"
+
+#: templates/forms/config.form.html.twig
+msgid "Every currently blocked account, IP, or email. Lift one early with Unblock, or select several and unlock them together."
+msgstr "Todas las cuentas, IPs o correos bloqueados actualmente. Levanta un bloqueo con Desbloquear, o selecciona varios y desbloquéalos a la vez."
+
+#: templates/forms/config.form.html.twig
+msgid "Unlock every currently visible/filtered row?"
+msgstr "¿Desbloquear todas las filas actualmente visibles o filtradas?"
+
+#: templates/forms/config.form.html.twig
+msgid "User"
+msgstr "Usuario"
+
+#: templates/forms/config.form.html.twig
+msgid "IP"
+msgstr "IP"
+
+#: templates/forms/config.form.html.twig
+msgid "Blocked at"
+msgstr "Bloqueado el"
+
+#: templates/forms/config.form.html.twig
+msgid "Remaining"
+msgstr "Restante"
+
+#: templates/forms/config.form.html.twig
+msgid "Expired"
+msgstr "Caducado"
