@@ -164,7 +164,13 @@ class PluginMoresecurityWhitelist extends CommonDropdown
             return null;
         }
 
-        return inet_pton($ip);
+        $packed = inet_pton($ip);
+        // IPv4 mapeada en IPv6: se compara como la IPv4 que lleva.
+        if (strlen($packed) === 16 && str_starts_with($packed, str_repeat("\0", 10) . "\xff\xff")) {
+            return substr($packed, 12);
+        }
+
+        return $packed;
     }
 
     private static function normalizeIpOrCidr(string $value): ?string
@@ -321,7 +327,7 @@ class PluginMoresecurityWhitelist extends CommonDropdown
                KEY `value` (`value`)
                ) ENGINE=InnoDB DEFAULT CHARSET={$default_charset}
                COLLATE={$default_collation} ROW_FORMAT=DYNAMIC;";
-            $DB->doQuery($query) or die($DB->error());
+            $DB->doQuery($query) or throw new RuntimeException($DB->error());
         }
     }
 

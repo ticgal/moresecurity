@@ -376,3 +376,11 @@ msgstr "Restante"
 #: templates/forms/config.form.html.twig
 msgid "Expired"
 msgstr "Caducado"
+
+#: hook.php
+msgid "Invalid or expired security token. Please reload the page and try again."
+msgstr "Token de seguridad no válido o caducado. Recargue la página e inténtelo de nuevo."
+
+#: hook.php
+msgid "Geoblocking was not enabled: \"Only allow these countries\" needs at least one country."
+msgstr "No se activó el geobloqueo: \"Permitir solo estos países\" necesita al menos un país."

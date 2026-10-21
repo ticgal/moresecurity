@@ -223,6 +223,19 @@ class PluginMoresecurityConfig extends CommonDBTM
             $input['geoblock_countries'] = implode(',', array_intersect(array_map('strval', $values), $valid));
         }
 
+        // "Solo estos países" sin ningún país rechazaría todos los logins de
+        // direcciones enrutables: no se permite guardar esa combinación.
+        $mode      = $input['geoblock_mode'] ?? ($this->fields['geoblock_mode'] ?? PluginMoresecurityGeoip::MODE_DISABLED);
+        $countries = $input['geoblock_countries'] ?? ($this->fields['geoblock_countries'] ?? '');
+        if ($mode === PluginMoresecurityGeoip::MODE_ALLOW && trim((string) $countries) === '') {
+            $input['geoblock_mode'] = PluginMoresecurityGeoip::MODE_DISABLED;
+            Session::addMessageAfterRedirect(
+                __('Geoblocking was not enabled: "Only allow these countries" needs at least one country.', 'moresecurity'),
+                true,
+                WARNING
+            );
+        }
+
         // Proxies de confianza: solo IPs válidas, el resto se descarta.
         if (array_key_exists('trusted_proxies', $input)) {
             $input['trusted_proxies'] = self::sanitizeIpList($input['trusted_proxies']);
@@ -435,7 +448,7 @@ class PluginMoresecurityConfig extends CommonDBTM
         $valid = [];
         foreach (PluginMoresecurityLimiter::parseList($value) as $entry) {
             if (filter_var($entry, FILTER_VALIDATE_IP) !== false) {
-                $valid[] = $entry;
+                $valid[] = PluginMoresecurityLimiter::canonicalIp($entry);
             } else {
                 Session::addMessageAfterRedirect(
                     sprintf(__('Ignored invalid IP entry: %s', 'moresecurity'), htmlescape($entry)),

@@ -478,6 +478,13 @@ class PluginMoresecurityGeoip
      */
     public static function cronUpdateDb(CronTask $task): int
     {
+        // Sin geobloqueo activo no se hace ninguna petición saliente, salvo
+        // que aún no haya base de datos (así existe al activar el modo).
+        $mode = PluginMoresecurityConfig::getInstance()->fields['geoblock_mode'] ?? self::MODE_DISABLED;
+        if ($mode === self::MODE_DISABLED && is_file(self::getDatabasePath())) {
+            return 0;
+        }
+
         $ok = self::downloadDatabase();
 
         if ($ok) {

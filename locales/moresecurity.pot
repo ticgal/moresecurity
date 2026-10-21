@@ -352,3 +352,11 @@ msgstr ""
 #: templates/forms/config.form.html.twig
 msgid "Expired"
 msgstr ""
+
+#: hook.php
+msgid "Invalid or expired security token. Please reload the page and try again."
+msgstr ""
+
+#: hook.php
+msgid "Geoblocking was not enabled: \"Only allow these countries\" needs at least one country."
+msgstr ""

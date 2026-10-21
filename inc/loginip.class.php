@@ -29,6 +29,8 @@
  * -------------------------------------------------------------------------
  */
 
+use Glpi\DBAL\QueryFunction;
+
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
 }
@@ -83,17 +85,15 @@ class PluginMoresecurityLoginip extends CommonDBTM
         $ip = PluginMoresecurityLimiter::bucketIp($ip);
         global $DB;
 
-        $ip_q = DBmysql::quoteValue($ip);
-        $res  = $DB->doQuery(
-            "SELECT COUNT(*) AS c, SUM(`login` = " . DBmysql::quoteValue($login) . ") AS e
-             FROM " . DBmysql::quoteName(self::getTable()) . "
-             WHERE `ip` = $ip_q AND `last_try` > (NOW() - INTERVAL " . (int) self::TIME_WINDOW . " SECOND)"
-        );
-        $row = $res ? $DB->fetchAssoc($res) : null;
+        $window = [
+            'ip'       => $ip,
+            'last_try' => ['>', PluginMoresecurityLimiter::windowStart()],
+        ];
+        $identities = $DB->request(['COUNT' => 'c', 'FROM' => self::getTable(), 'WHERE' => $window])->current();
+        $known      = $DB->request(['COUNT' => 'c', 'FROM' => self::getTable(), 'WHERE' => $window + ['login' => $login]])->current();
 
-        return $row
-            && (int) $row['e'] === 0
-            && (int) $row['c'] >= PluginMoresecurityLimiter::MAX_IDENTITIES_PER_IP;
+        return (int) $known['c'] === 0
+            && (int) $identities['c'] >= PluginMoresecurityLimiter::MAX_IDENTITIES_PER_IP;
     }
 
     /**
@@ -147,10 +147,21 @@ class PluginMoresecurityLoginip extends CommonDBTM
 
     public static function getBlocked(int $limit = 100): array
     {
-        return PluginMoresecurityLimiter::fetchAll(
-            "SELECT `ip`, MAX(`blocked`) AS blocked, MAX(`last_try`) AS last_try, TIMESTAMPDIFF(SECOND, NOW(), MAX(`blocked`)) AS remaining FROM " . DBmysql::quoteName(self::getTable()) . "
-             WHERE `blocked` IS NOT NULL AND `blocked` > NOW() GROUP BY `ip` ORDER BY blocked DESC LIMIT " . (int) $limit
-        );
+        global $DB;
+
+        return iterator_to_array($DB->request([
+            'SELECT'  => [
+                'ip',
+                PluginMoresecurityLimiter::maxOf('blocked', 'blocked'),
+                PluginMoresecurityLimiter::maxOf('last_try', 'last_try'),
+                PluginMoresecurityLimiter::secondsUntil(PluginMoresecurityLimiter::maxOf('blocked')),
+            ],
+            'FROM'    => self::getTable(),
+            'WHERE'   => PluginMoresecurityLimiter::activeBlockCriteria(),
+            'GROUPBY' => 'ip',
+            'ORDER'   => 'blocked DESC',
+            'LIMIT'   => $limit,
+        ]), false);
     }
 
     /**
@@ -204,33 +215,35 @@ class PluginMoresecurityLoginip extends CommonDBTM
             (int) ($config->fields['ip_max_time_blocked'] ?? 0)
         );
 
-        $DB->doQuery(
-            "UPDATE " . DBmysql::quoteName(self::getTable()) . "
-             SET `blocked` = NOW() + INTERVAL " . (int) $delay . " SECOND
-             WHERE `ip` = " . DBmysql::quoteValue($ip)
-        );
+        $DB->update(self::getTable(), [
+            'blocked' => PluginMoresecurityLimiter::fromNow($delay),
+        ], ['ip' => $ip]);
     }
 
     private static function sumTriesForIp(string $ip): int
     {
-        $rows = PluginMoresecurityLimiter::fetchAll(
-            "SELECT COALESCE(SUM(`ip_try`), 0) AS total FROM " . DBmysql::quoteName(self::getTable()) . "
-             WHERE `ip` = " . DBmysql::quoteValue($ip) . "
-               AND `last_try` > (NOW() - INTERVAL " . (int) self::TIME_WINDOW . " SECOND)"
-        );
+        global $DB;
 
-        return (int) ($rows[0]['total'] ?? 0);
+        $row = $DB->request([
+            'SELECT' => QueryFunction::sum('ip_try', false, 'total'),
+            'FROM'   => self::getTable(),
+            'WHERE'  => ['ip' => $ip, 'last_try' => ['>', PluginMoresecurityLimiter::windowStart()]],
+        ])->current();
+
+        return (int) ($row['total'] ?? 0);
     }
 
     public static function countDistinctIpsForLogin(string $login): int
     {
-        $rows = PluginMoresecurityLimiter::fetchAll(
-            "SELECT COUNT(DISTINCT `ip`) AS c FROM " . DBmysql::quoteName(self::getTable()) . "
-             WHERE `login` = " . DBmysql::quoteValue($login) . "
-               AND `last_try` > (NOW() - INTERVAL " . (int) self::TIME_WINDOW . " SECOND)"
-        );
+        global $DB;
 
-        return (int) ($rows[0]['c'] ?? 0);
+        $row = $DB->request([
+            'SELECT' => QueryFunction::count('ip', true, 'c'),
+            'FROM'   => self::getTable(),
+            'WHERE'  => ['login' => $login, 'last_try' => ['>', PluginMoresecurityLimiter::windowStart()]],
+        ])->current();
+
+        return (int) ($row['c'] ?? 0);
     }
 
     public static function purge(int $retention_days, int $batch = 1000, int $max_batches = 50): int
@@ -264,7 +277,7 @@ class PluginMoresecurityLoginip extends CommonDBTM
                 UNIQUE KEY `login_ip` (`login`, `ip`)
             ) ENGINE=InnoDB DEFAULT CHARSET={$default_charset} COLLATE={$default_collation} ROW_FORMAT=DYNAMIC;";
 
-            $DB->doQuery($query) or die($DB->error());
+            $DB->doQuery($query) or throw new RuntimeException($DB->error());
         } else {
             // El UNIQUE solo puede crearse si no hay parejas duplicadas.
             self::mergeDuplicates($table);

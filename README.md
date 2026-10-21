@@ -55,8 +55,8 @@ Do not add the proxy to the whitelist unless you accept exempting all of its cli
 
 #### Geoblocking
 - **Mode** — *Disabled*, *Only allow these countries* or *Block these countries*. Applies to logins
-  only; whitelisted IPs skip it. Denied logins are written to the Security log and do not consume
-  any attempt budget.
+  only; whitelisted IPs skip it. Denied logins are written to the Security log and count against the
+  per-IP budget, so a persistent origin ends up blocked.
 - **Countries** — ISO 3166-1 countries the mode applies to.
 - Country data comes from DB-IP's free *IP to Country Lite* database (CC BY 4.0), downloaded into
   the GLPI plugin documents folder by the monthly automatic action *updatedb*. Until it has been
@@ -96,7 +96,8 @@ data: adjust both actions to your retention policy.
   credentials, or the OAuth *password* grant of the High-Level API) do not go through the plugin and are not
   counted or geoblocked. If you do not need them, disable *Enable login with credentials* in **Setup > General >
   API** and use API tokens; otherwise apply geographic restrictions at your reverse proxy as well. The plugin's
-  configuration tab shows a warning while that API login is enabled.
+  configuration tab shows a warning while that API login is enabled. CalDAV (`/caldav.php`, HTTP Basic) is covered:
+  it honours blocks and geoblocking and counts failed passwords like the web form.
 - **The Security log is global.** Attempts happen before a session and an entity exist, so the log and the
   dashboard cards are not filtered by entity. Grant the *More Security > Security log* right (and the dashboard
   cards, which require it) only to profiles that may see the logins, emails and IPs of the whole instance.

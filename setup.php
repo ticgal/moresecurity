@@ -38,7 +38,7 @@ if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     include_once __DIR__ . '/vendor/autoload.php';
 }
 
-define('PLUGIN_MORESECURITY_VERSION', '2.3.0');
+define('PLUGIN_MORESECURITY_VERSION', '2.3.1-beta1');
 define('PLUGIN_MORESECURITY_MIN_GLPI', '11.0.0');
 define('PLUGIN_MORESECURITY_MAX_GLPI', '11.0.99');
 
