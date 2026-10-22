@@ -29,6 +29,7 @@
  * -------------------------------------------------------------------------
  */
 
+use Glpi\DBAL\QueryExpression;
 use Glpi\DBAL\QueryFunction;
 
 if (!defined('GLPI_ROOT')) {
@@ -296,10 +297,12 @@ class PluginMoresecurityLoginip extends CommonDBTM
     {
         global $DB;
 
-        $dups = PluginMoresecurityLimiter::fetchAll(
-            "SELECT `login`, `ip` FROM " . DBmysql::quoteName($table) . "
-             GROUP BY `login`, `ip` HAVING COUNT(*) > 1"
-        );
+        $dups = iterator_to_array($DB->request([
+            'SELECT'  => ['login', 'ip'],
+            'FROM'    => $table,
+            'GROUPBY' => ['login', 'ip'],
+            'HAVING'  => [new QueryExpression('COUNT(*) > 1')],
+        ]), false);
         foreach ($dups as $dup) {
             $rows = iterator_to_array($DB->request([
                 'FROM'  => $table,

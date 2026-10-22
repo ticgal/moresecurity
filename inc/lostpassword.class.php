@@ -30,6 +30,7 @@
  */
 
 use Glpi\Application\View\TemplateRenderer;
+use Glpi\DBAL\QueryExpression;
 use Glpi\DBAL\QueryFunction;
 
 if (!defined('GLPI_ROOT')) {
@@ -236,10 +237,13 @@ class PluginMoresecurityLostpassword extends CommonDBTM
     {
         global $DB;
 
-        $dups = PluginMoresecurityLimiter::fetchAll(
-            "SELECT `email` FROM " . DBmysql::quoteName($table) . "
-			 WHERE `email` IS NOT NULL GROUP BY `email` HAVING COUNT(*) > 1"
-        );
+        $dups = iterator_to_array($DB->request([
+            'SELECT'  => ['email'],
+            'FROM'    => $table,
+            'WHERE'   => ['NOT' => ['email' => null]],
+            'GROUPBY' => ['email'],
+            'HAVING'  => [new QueryExpression('COUNT(*) > 1')],
+        ]), false);
         foreach ($dups as $dup) {
             $rows = iterator_to_array($DB->request([
                 'FROM'  => $table,
