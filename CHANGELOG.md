@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.3.1 - 21/10/2026
+### Bugfix
+- Security review 21/10/2026: CalDAV Basic logins and `/front/initpassword.php` are now covered by the attempt/IP budgets and geoblocking
+- A login POST with an invalid body CSRF token is denied (403) instead of reaching core, which accepted the header token and skipped geoblocking
+- Per-IP overflow no longer disables the account lockout for logins without a row
+- X-Forwarded-For: an entry that is not a bare IP (`ip:port`) now falls back to the proxy address instead of trusting the client-written part; IPv4-mapped IPv6 addresses are counted and whitelisted as IPv4
+- Runtime reads and updates of the counters use the GLPI query builder (`$DB->request()` / `$DB->update()`); raw SQL remains only for `GET_LOCK` and the atomic upserts; installers throw instead of `die()`
+- Security log: the per-IP row cap and the geoblock de-duplication key on the /64 prefix for IPv6; `AttemptLog::canCreate()` returns false
+- Trusted proxies are compared in canonical IP notation (IPv6 written in any form matches)
+- "Only allow these countries" with no country cannot be saved (geoblocking stays disabled with a warning)
+- The `updatedb` automatic action makes no outbound request while geoblocking is disabled and a database is already present
+
 ## 2.3.0 - 19/10/2026
 ### Features
 - Geoblocking: allow or deny logins by country, using DB-IP's free Lite database (monthly automatic action to refresh it)

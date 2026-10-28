@@ -29,6 +29,8 @@
  * -------------------------------------------------------------------------
  */
 
+use Glpi\DBAL\QueryExpression;
+use Glpi\DBAL\QueryFunction;
 use Safe\Exceptions\SafeExceptionInterface;
 
 use function Safe\inet_ntop;
@@ -109,7 +111,8 @@ class PluginMoresecurityLimiter
         $remote_addr = self::validIp((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
 
         $config  = PluginMoresecurityConfig::getInstance();
-        $proxies = self::parseList((string) ($config->fields['trusted_proxies'] ?? ''));
+        $proxies = array_map([self::class, 'canonicalIp'], self::parseList((string) ($config->fields['trusted_proxies'] ?? '')));
+        $remote_addr = self::canonicalIp($remote_addr);
         if ($remote_addr === '' || $proxies === [] || !in_array($remote_addr, $proxies, true)) {
             return $remote_addr;
         }
@@ -118,8 +121,11 @@ class PluginMoresecurityLimiter
         // izquierda hasta el primer salto que no sea un proxy de confianza.
         $chain = array_reverse(self::parseList((string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '')));
         foreach ($chain as $candidate) {
-            if (filter_var($candidate, FILTER_VALIDATE_IP) === false) {
-                continue;
+            // Un salto que no es una IP (p. ej. "ip:puerto") rompe la cadena
+            // de confianza: lo anterior lo escribió el cliente.
+            $candidate = self::canonicalIp($candidate);
+            if ($candidate === '') {
+                return $remote_addr;
             }
             if (!in_array($candidate, $proxies, true)) {
                 return $candidate;
@@ -141,10 +147,28 @@ class PluginMoresecurityLimiter
             return $ip;
         }
         try {
-            return inet_ntop(substr(inet_pton($ip), 0, 8) . str_repeat("\0", 8)) . '/64';
+            $packed = inet_pton($ip);
+            // IPv4 mapeada (::ffff:a.b.c.d): se cuenta como la IPv4 que lleva.
+            if (str_starts_with($packed, str_repeat("\0", 10) . "\xff\xff")) {
+                return inet_ntop(substr($packed, 12));
+            }
+            return inet_ntop(substr($packed, 0, 8) . str_repeat("\0", 8)) . '/64';
         } catch (SafeExceptionInterface $e) {
             return $ip;
         }
+    }
+
+    /**
+     * Forma canónica de una IP válida (IPv6 comprimida y en minúsculas) para
+     * comparar direcciones escritas con distinta notación; '' si no es IP.
+     */
+    public static function canonicalIp(string $ip): string
+    {
+        if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+            return '';
+        }
+
+        return inet_ntop(inet_pton($ip));
     }
 
     /**
@@ -216,18 +240,45 @@ class PluginMoresecurityLimiter
         }
     }
 
-    public static function fetchAll(string $sql): array
+    /**
+     * Inicio de la ventana de conteo (ahora - TIME_WINDOW), calculado en SQL
+     * para no mezclar el reloj de PHP con el de la base de datos.
+     */
+    public static function windowStart(): QueryExpression
     {
-        global $DB;
+        return QueryFunction::dateSub(QueryFunction::now(), self::TIME_WINDOW, 'SECOND');
+    }
 
-        $rows = [];
-        if ($res = $DB->doQuery($sql)) {
-            while ($row = $DB->fetchAssoc($res)) {
-                $rows[] = $row;
-            }
-        }
+    /**
+     * Instante "ahora + $seconds" calculado en SQL.
+     */
+    public static function fromNow(int $seconds): QueryExpression
+    {
+        return QueryFunction::dateAdd(QueryFunction::now(), $seconds, 'SECOND');
+    }
 
-        return $rows;
+    /**
+     * MAX() de una columna, con alias.
+     */
+    public static function maxOf(string $field, ?string $alias = null): QueryExpression
+    {
+        return new QueryExpression('MAX(' . DBmysql::quoteName($field) . ')', $alias);
+    }
+
+    /**
+     * Segundos que faltan hasta el valor de una columna (o expresión).
+     */
+    public static function secondsUntil(string|QueryExpression $field): QueryExpression
+    {
+        return QueryFunction::timestampdiff('SECOND', QueryFunction::now(), $field, 'remaining');
+    }
+
+    /**
+     * Filas con bloqueo vigente (columna `blocked` en el futuro).
+     */
+    public static function activeBlockCriteria(): array
+    {
+        return ['blocked' => ['>', QueryFunction::now()]];
     }
 
     /**
@@ -238,16 +289,12 @@ class PluginMoresecurityLimiter
     {
         global $DB;
 
-        $conditions = [];
-        foreach ($where as $field => $value) {
-            $conditions[] = DBmysql::quoteName($field) . ' = ' . DBmysql::quoteValue($value);
-        }
-        $res = $DB->doQuery(
-            "SELECT 1 FROM " . DBmysql::quoteName($table) . "
-             WHERE " . implode(' AND ', $conditions) . " AND `blocked` IS NOT NULL AND `blocked` > NOW() LIMIT 1"
-        );
-
-        return $res && $DB->numrows($res) > 0;
+        return count($DB->request([
+            'SELECT' => 'id',
+            'FROM'   => $table,
+            'WHERE'  => $where + self::activeBlockCriteria(),
+            'LIMIT'  => 1,
+        ])) > 0;
     }
 
     /**
@@ -257,10 +304,10 @@ class PluginMoresecurityLimiter
     {
         global $DB;
 
-        $DB->doQuery(
-            "UPDATE " . DBmysql::quoteName($table) . "
-             SET `blocked` = NOW() + INTERVAL " . (int) self::DISTRIBUTED_DEFAULT . " SECOND
-             WHERE `blocked` > NOW() + INTERVAL " . (int) self::HARD_CEILING . " SECOND"
-        );
+        $DB->update($table, [
+            'blocked' => self::fromNow(self::DISTRIBUTED_DEFAULT),
+        ], [
+            'blocked' => ['>', self::fromNow(self::HARD_CEILING)],
+        ]);
     }
 }

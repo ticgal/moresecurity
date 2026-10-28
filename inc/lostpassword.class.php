@@ -30,6 +30,8 @@
  */
 
 use Glpi\Application\View\TemplateRenderer;
+use Glpi\DBAL\QueryExpression;
+use Glpi\DBAL\QueryFunction;
 
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
@@ -97,11 +99,11 @@ class PluginMoresecurityLostpassword extends CommonDBTM
     {
         global $DB;
 
-        $DB->doQuery(
-            "UPDATE " . DBmysql::quoteName(self::getTable()) . "
-			 SET `blocked` = NOW() + INTERVAL " . max(1, min((int) $config->fields['time_reset'], PluginMoresecurityLimiter::HARD_CEILING)) . " SECOND
-			 WHERE `email` = " . DBmysql::quoteValue($email)
-        );
+        $DB->update(self::getTable(), [
+            'blocked' => PluginMoresecurityLimiter::fromNow(
+                max(1, min((int) $config->fields['time_reset'], PluginMoresecurityLimiter::HARD_CEILING))
+            ),
+        ], ['email' => $email]);
     }
 
     /**
@@ -110,12 +112,14 @@ class PluginMoresecurityLostpassword extends CommonDBTM
      */
     private static function reconcile(string $email, int $threshold, PluginMoresecurityConfig $config): bool
     {
-        $rows = PluginMoresecurityLimiter::fetchAll(
-            "SELECT `email_try`, `blocked`, (" . self::window() . ") AS stale
-			 FROM " . DBmysql::quoteName(self::getTable()) . " WHERE `email` = " . DBmysql::quoteValue($email)
-        );
-        $row = $rows[0] ?? null;
-        if (!$row || (int) $row['stale'] === 1 || $row['blocked'] !== null || (int) $row['email_try'] < $threshold) {
+        global $DB;
+
+        $row = $DB->request([
+            'SELECT' => ['email_try', 'blocked', QueryFunction::timestampdiff('SECOND', 'last_try', QueryFunction::now(), 'idle')],
+            'FROM'   => self::getTable(),
+            'WHERE'  => ['email' => $email],
+        ])->current();
+        if (!$row || ($row['idle'] !== null && (int) $row['idle'] > PluginMoresecurityLimiter::TIME_WINDOW) || $row['blocked'] !== null || (int) $row['email_try'] < $threshold) {
             return false;
         }
         self::setBlocked($email, $config);
@@ -140,10 +144,8 @@ class PluginMoresecurityLostpassword extends CommonDBTM
 				`last_try`  = NOW()"
         ) or throw new RuntimeException('More Security: could not record the attempt');
 
-        $rows = PluginMoresecurityLimiter::fetchAll(
-            "SELECT `email_try` FROM " . DBmysql::quoteName($table) . " WHERE `email` = $email_q"
-        );
-        if ((int) ($rows[0]['email_try'] ?? 0) >= $threshold) {
+        $row = $DB->request(['SELECT' => 'email_try', 'FROM' => $table, 'WHERE' => ['email' => $email]])->current();
+        if ((int) ($row['email_try'] ?? 0) >= $threshold) {
             self::setBlocked($email, $config);
         }
     }
@@ -163,10 +165,15 @@ class PluginMoresecurityLostpassword extends CommonDBTM
 
     public static function getBlocked(int $limit = 100): array
     {
-        return PluginMoresecurityLimiter::fetchAll(
-            "SELECT `email`, `email_try`, `blocked`, `last_try`, TIMESTAMPDIFF(SECOND, NOW(), `blocked`) AS remaining FROM " . DBmysql::quoteName(self::getTable()) . "
-			 WHERE `blocked` IS NOT NULL AND `blocked` > NOW() ORDER BY `blocked` DESC LIMIT " . (int) $limit
-        );
+        global $DB;
+
+        return iterator_to_array($DB->request([
+            'SELECT' => ['email', 'email_try', 'blocked', 'last_try', PluginMoresecurityLimiter::secondsUntil('blocked')],
+            'FROM'   => self::getTable(),
+            'WHERE'  => PluginMoresecurityLimiter::activeBlockCriteria(),
+            'ORDER'  => 'blocked DESC',
+            'LIMIT'  => $limit,
+        ]), false);
     }
 
     public static function purge(int $retention_days, int $batch = 1000, int $max_batches = 50): int
@@ -210,7 +217,7 @@ class PluginMoresecurityLostpassword extends CommonDBTM
 			   KEY `last_try` (`last_try`)
 			   ) ENGINE=InnoDB DEFAULT CHARSET={$default_charset}
 			   COLLATE={$default_collation} ROW_FORMAT=DYNAMIC;";
-            $DB->doQuery($query) or die($DB->error());
+            $DB->doQuery($query) or throw new RuntimeException($DB->error());
         } else {
             // 2.2.2 (MS-05/MS-06): ventana de inactividad e índice único para
             // el upsert atómico. Hay que fusionar duplicados antes del UNIQUE.
@@ -230,10 +237,13 @@ class PluginMoresecurityLostpassword extends CommonDBTM
     {
         global $DB;
 
-        $dups = PluginMoresecurityLimiter::fetchAll(
-            "SELECT `email` FROM " . DBmysql::quoteName($table) . "
-			 WHERE `email` IS NOT NULL GROUP BY `email` HAVING COUNT(*) > 1"
-        );
+        $dups = iterator_to_array($DB->request([
+            'SELECT'  => ['email'],
+            'FROM'    => $table,
+            'WHERE'   => ['NOT' => ['email' => null]],
+            'GROUPBY' => ['email'],
+            'HAVING'  => [new QueryExpression('COUNT(*) > 1')],
+        ]), false);
         foreach ($dups as $dup) {
             $rows = iterator_to_array($DB->request([
                 'FROM'  => $table,

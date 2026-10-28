@@ -253,6 +253,54 @@ function plugin_moresecurity_enforce_recovery(): string
 }
 
 /**
+ * CalDAV (/caldav.php, HTTP Basic): mismas reglas que el login web. Se
+ * rechaza si la IP o la cuenta están bloqueadas o la IP no está permitida; el
+ * intento se reserva antes y se libera al terminar si no hubo 401.
+ */
+function plugin_moresecurity_enforce_caldav_gate(): void
+{
+    // Apache no siempre rellena PHP_AUTH_USER (sabre lee la cabecera directa).
+    $user = $_SERVER['PHP_AUTH_USER'] ?? null;
+    if ($user === null) {
+        $header = (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
+        if (stripos($header, 'Basic ') === 0) {
+            $decoded = base64_decode(substr($header, 6), true);
+            $user    = is_string($decoded) && str_contains($decoded, ':') ? explode(':', $decoded, 2)[0] : null;
+        }
+    }
+    $login = PluginMoresecurityLimiter::cleanIdentity($user);
+    $ip    = PluginMoresecurityLimiter::getClientIp();
+    if ($login === null || ($ip !== '' && PluginMoresecurityWhitelist::isWhitelisted($ip))) {
+        return;
+    }
+
+    $refuse = static function (int $status): never {
+        http_response_code($status);
+        exit;
+    };
+
+    if ($ip !== '') {
+        if (PluginMoresecurityLoginip::isIpBlockActive($ip)) {
+            $refuse(429);
+        }
+        if (!PluginMoresecurityGeoip::isAllowed($ip, $login)) {
+            PluginMoresecurityLoginip::countGeoDenial($ip);
+            $refuse(403);
+        }
+    }
+
+    if (PluginMoresecurityLogin::reserve($login, $ip) !== null) {
+        $refuse(429);
+    }
+
+    register_shutdown_function(static function () use ($login): void {
+        if (http_response_code() !== 401) {
+            PluginMoresecurityLogin::clearLoginTry($login);
+        }
+    });
+}
+
+/**
  * Hook post_init (arranca antes de enrutar a cualquier script legacy,
  * incluido /front/login.php nativo). Cierra el bypass de UC-01.
  *
@@ -266,10 +314,6 @@ function plugin_moresecurity_enforce_login_gate(): void
 {
     global $CFG_GLPI;
 
-    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-        return;
-    }
-
     try {
         $path = rawurldecode((string) parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH));
         $path = preg_replace('#/+#', '/', $path);
@@ -278,11 +322,23 @@ function plugin_moresecurity_enforce_login_gate(): void
         $path = '';
     }
 
+    // CalDAV verifica contraseñas con HTTP Basic en cualquier método.
+    if (preg_match('#/caldav\.php(/|$)#', $path)) {
+        plugin_moresecurity_enforce_caldav_gate();
+    }
+
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        return;
+    }
+
     if (isset($_POST['login_name']) || isset($_POST['login_password'])) {
         // Ningún otro script del núcleo procesa credenciales: se atiende
         // cualquier ruta, no solo las conocidas, para no dejar atajos.
+        // Sin token válido en el cuerpo no se devuelve el control: el núcleo
+        // aceptaría el token de cabecera y abriría sesión sin pasar por el
+        // geobloqueo ni los contadores.
         if (!Session::validateCSRF($_POST)) {
-            return;
+            plugin_moresecurity_deny(403, [__('Invalid or expired security token. Please reload the page and try again.', 'moresecurity')]);
         }
         try {
             if (!isset($_SESSION["glpicookietest"]) || ($_SESSION["glpicookietest"] != 'testcookie')) {
@@ -305,7 +361,7 @@ function plugin_moresecurity_enforce_login_gate(): void
     if (
         isset($_POST['email'])
         && !isset($_REQUEST['password_forget_token'])
-        && preg_match('#/(front/lostpassword\.php|plugins/moresecurity/front/lostpassword\.form\.php)(/|$)#', $path)
+        && preg_match('#/(front/lostpassword\.php|front/initpassword\.php|plugins/moresecurity/front/lostpassword\.form\.php)(/|$)#', $path)
         && $CFG_GLPI['notifications_mailing']
         && countElementsInTable('glpi_notifications', ['itemtype' => 'User', 'event' => 'passwordforget', 'is_active' => 1])
     ) {

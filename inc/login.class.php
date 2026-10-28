@@ -29,6 +29,8 @@
  * -------------------------------------------------------------------------
  */
 
+use Glpi\DBAL\QueryFunction;
+
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
 }
@@ -110,18 +112,13 @@ class PluginMoresecurityLogin extends CommonDBTM
             }
         }
 
-        if ($track_account && !($overflow && !self::exists($login))) {
+        // El desbordamiento solo limita las filas de loginip: el contador de
+        // la cuenta se incrementa siempre.
+        if ($track_account) {
             self::addTry($login, $account_threshold, $config);
         }
 
         return null;
-    }
-
-    private static function exists(string $login): bool
-    {
-        global $DB;
-
-        return count($DB->request(['FROM' => self::getTable(), 'WHERE' => ['login' => $login], 'LIMIT' => 1])) > 0;
     }
 
     /**
@@ -132,13 +129,12 @@ class PluginMoresecurityLogin extends CommonDBTM
     {
         global $DB;
 
-        $res = $DB->doQuery(
-            "SELECT `login_try`, `blocked`,
-				(`last_try` IS NOT NULL AND `last_try` < (NOW() - INTERVAL " . (int) self::TIME_WINDOW . " SECOND)) AS stale
-			 FROM " . DBmysql::quoteName(self::getTable()) . " WHERE `login` = " . DBmysql::quoteValue($login)
-        );
-        $row = $res ? $DB->fetchAssoc($res) : null;
-        if (!$row || (int) $row['stale'] === 1 || $row['blocked'] !== null || (int) $row['login_try'] < $threshold) {
+        $row = $DB->request([
+            'SELECT' => ['login_try', 'blocked', QueryFunction::timestampdiff('SECOND', 'last_try', QueryFunction::now(), 'idle')],
+            'FROM'   => self::getTable(),
+            'WHERE'  => ['login' => $login],
+        ])->current();
+        if (!$row || ($row['idle'] !== null && (int) $row['idle'] > self::TIME_WINDOW) || $row['blocked'] !== null || (int) $row['login_try'] < $threshold) {
             return false;
         }
 
@@ -156,11 +152,9 @@ class PluginMoresecurityLogin extends CommonDBTM
     {
         global $DB;
 
-        $DB->doQuery(
-            "UPDATE " . DBmysql::quoteName(self::getTable()) . "
-			 SET `blocked` = NOW() + INTERVAL " . (int) $delay . " SECOND
-			 WHERE `login` = " . DBmysql::quoteValue($login)
-        );
+        $DB->update(self::getTable(), [
+            'blocked' => PluginMoresecurityLimiter::fromNow($delay),
+        ], ['login' => $login]);
     }
 
     /**
@@ -208,8 +202,7 @@ class PluginMoresecurityLogin extends CommonDBTM
 				`last_try`  = NOW()"
         ) or throw new RuntimeException('More Security: could not record the attempt');
 
-        $res = $DB->doQuery("SELECT `login_try` FROM " . DBmysql::quoteName($table) . " WHERE `login` = $login_q");
-        $row = $res ? $DB->fetchAssoc($res) : null;
+        $row = $DB->request(['SELECT' => 'login_try', 'FROM' => $table, 'WHERE' => ['login' => $login]])->current();
         if (!$row) {
             return;
         }
@@ -285,10 +278,15 @@ class PluginMoresecurityLogin extends CommonDBTM
      */
     public static function getBlocked(int $limit = 100): array
     {
-        return PluginMoresecurityLimiter::fetchAll(
-            "SELECT `login`, `login_try`, `blocked`, `last_try`, TIMESTAMPDIFF(SECOND, NOW(), `blocked`) AS remaining FROM " . DBmysql::quoteName(self::getTable()) . "
-			 WHERE `blocked` IS NOT NULL AND `blocked` > NOW() ORDER BY `blocked` DESC LIMIT " . (int) $limit
-        );
+        global $DB;
+
+        return iterator_to_array($DB->request([
+            'SELECT' => ['login', 'login_try', 'blocked', 'last_try', PluginMoresecurityLimiter::secondsUntil('blocked')],
+            'FROM'   => self::getTable(),
+            'WHERE'  => PluginMoresecurityLimiter::activeBlockCriteria(),
+            'ORDER'  => 'blocked DESC',
+            'LIMIT'  => $limit,
+        ]), false);
     }
 
     /**
@@ -328,7 +326,7 @@ class PluginMoresecurityLogin extends CommonDBTM
 				KEY `last_try` (`last_try`)
 			) ENGINE=InnoDB DEFAULT CHARSET={$default_charset} COLLATE={$default_collation} ROW_FORMAT=DYNAMIC;";
 
-            $DB->doQuery($query) or die($DB->error());
+            $DB->doQuery($query) or throw new RuntimeException($DB->error());
         } else {
             // 2.1.0
             $migration->addField($table, 'last_try', 'timestamp');

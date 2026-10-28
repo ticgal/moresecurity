@@ -37,6 +37,7 @@ if (!defined('GLPI_ROOT')) {
 
 use Glpi\Application\View\TemplateRenderer;
 use Glpi\DBAL\QueryExpression;
+use Glpi\DBAL\QueryFunction;
 use Glpi\Event;
 
 /**
@@ -103,6 +104,11 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      * Registro de solo lectura: se escribe internamente y lo poda la acción
      * automática de retención; la UI no ofrece editar, borrar ni purgar.
      */
+    public static function canCreate(): bool
+    {
+        return false;
+    }
+
     public static function canUpdate(): bool
     {
         return false;
@@ -175,16 +181,45 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      */
     private static function ipOverCap(string $ip): bool
     {
+        return self::countInBucket(
+            $ip,
+            ['date' => ['>', QueryFunction::dateSub(QueryFunction::now(), 1, 'HOUR')]],
+            self::MAX_ROWS_PER_IP_HOUR
+        ) >= self::MAX_ROWS_PER_IP_HOUR;
+    }
+
+    /**
+     * Filas del registro del mismo origen que $ip (IPv4 exacta; IPv6 por
+     * prefijo /64, igual que los contadores de bloqueo), contadas hasta
+     * $limit. Una IPv6 que rota dentro de su /64 no esquiva el tope.
+     */
+    private static function countInBucket(string $ip, array $criteria, int $limit): int
+    {
         global $DB;
 
-        $res = $DB->doQuery(
-            "SELECT COUNT(*) AS c FROM " . DBmysql::quoteName(self::getTable()) . "
-			 WHERE `ip` = " . DBmysql::quoteValue($ip) . "
-			   AND `date` > (NOW() - INTERVAL 1 HOUR)"
-        );
-        $row = $res ? $DB->fetchAssoc($res) : null;
+        if (!str_contains($ip, ':')) {
+            $row = $DB->request(['COUNT' => 'c', 'FROM' => self::getTable(), 'WHERE' => ['ip' => $ip] + $criteria])->current();
 
-        return $row && (int) $row['c'] >= self::MAX_ROWS_PER_IP_HOUR;
+            return (int) $row['c'];
+        }
+
+        // El texto de una IPv6 comienza por su primer grupo: se acota por ahí
+        // y se confirma el /64 en PHP.
+        $bucket = PluginMoresecurityLimiter::bucketIp($ip);
+        $count  = 0;
+        $rows   = $DB->request([
+            'SELECT' => 'ip',
+            'FROM'   => self::getTable(),
+            'WHERE'  => ['ip' => ['LIKE', explode(':', $ip)[0] . ':%']] + $criteria,
+            'LIMIT'  => $limit * 20,
+        ]);
+        foreach ($rows as $row) {
+            if (PluginMoresecurityLimiter::bucketIp($row['ip']) === $bucket && ++$count >= $limit) {
+                break;
+            }
+        }
+
+        return $count;
     }
 
     /**
@@ -220,13 +255,11 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
 
         // Como mucho una fila (y un evento) por IP y ventana: un origen
         // denegado no puede inflar el registro ni `glpi_events` (SEV-02).
-        $recent = $DB->doQuery(
-            "SELECT 1 FROM " . DBmysql::quoteName(self::getTable()) . "
-			 WHERE `event` = " . DBmysql::quoteValue(self::EVENT_LOGIN_GEO) . "
-			   AND `ip` = " . DBmysql::quoteValue($ip) . "
-			   AND `date` > (NOW() - INTERVAL " . self::GEO_LOG_WINDOW . " SECOND) LIMIT 1"
-        );
-        if ($recent && $DB->numrows($recent) > 0) {
+        $recent = self::countInBucket($ip, [
+            'event' => self::EVENT_LOGIN_GEO,
+            'date'  => ['>', QueryFunction::dateSub(QueryFunction::now(), self::GEO_LOG_WINDOW, 'SECOND')],
+        ], 1);
+        if ($recent > 0) {
             return;
         }
 
@@ -696,7 +729,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
 				KEY `date_country_event` (`date`, `country`, `event`)
 			) ENGINE=InnoDB DEFAULT CHARSET={$default_charset} COLLATE={$default_collation} ROW_FORMAT=DYNAMIC;";
 
-            $DB->doQuery($query) or die($DB->error());
+            $DB->doQuery($query) or throw new RuntimeException($DB->error());
         }
 
         self::installDefaultDisplayPreferences();
