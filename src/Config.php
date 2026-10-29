@@ -29,16 +29,34 @@
  * -------------------------------------------------------------------------
  */
 
+namespace GlpiPlugin\Moresecurity;
+
+use CommonDBTM;
+use CommonGLPI;
+use DBConnection;
 use Glpi\Application\View\TemplateRenderer;
+use Html;
+use Log;
+use Migration;
+use Session;
+use User;
 
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
 }
 
-class PluginMoresecurityConfig extends CommonDBTM
+class Config extends CommonDBTM
 {
     private static $instance = null;
-    public static $rightname = 'config';
+    public static string $rightname = 'config';
+
+    /**
+     * Same re-authentication the core demands for its own configuration.
+     */
+    protected static function itemTypeRequiresReauthentication(): bool
+    {
+        return true;
+    }
 
     // Tope de seguridad para los campos de duración (segundos), muy por
     // debajo del límite de TIMESTAMP (2038), para que ninguna combinación
@@ -54,6 +72,7 @@ class PluginMoresecurityConfig extends CommonDBTM
 
     public function __construct()
     {
+        /** @var \DBmysql $DB */
         global $DB;
         if ($DB->tableExists($this->getTable())) {
             $this->getFromDB(1);
@@ -134,9 +153,12 @@ class PluginMoresecurityConfig extends CommonDBTM
      */
     public static function showConfigForm(): bool
     {
-        global $CFG_GLPI;
-
         $config = self::getInstance();
+
+        // La lista de bloqueos muestra logins, emails e IPs: mismo derecho que el
+        // registro de seguridad (o administrar la configuración).
+        $can_see_blocks = Session::haveRight(AttemptLog::$rightname, READ)
+            || Session::haveRight(self::$rightname, UPDATE);
 
         $filters = [];
         foreach ((array) ($_GET['filters'] ?? []) as $col => $value) {
@@ -144,22 +166,24 @@ class PluginMoresecurityConfig extends CommonDBTM
                 $filters[$col] = mb_substr($value, 0, 255);
             }
         }
-        $blocks = self::getActiveBlocks(
+        $blocks = !$can_see_blocks ? [
+            'filters' => [], 'sort' => null, 'order' => 'ASC', 'start' => 0, 'limit' => 0,
+            'entries' => [], 'total' => 0, 'filtered' => 0, 'keys' => [],
+        ] : self::getActiveBlocks(
             $filters,
             is_string($_GET['sort'] ?? null) ? $_GET['sort'] : null,
             ($_GET['order'] ?? 'ASC') === 'DESC' ? 'DESC' : 'ASC',
             max(1, (int) ($_SESSION['glpilist_limit'] ?? 15)),
-            max(0, (int) ($_GET['start'] ?? 0))
+            max(0, (int) ($_GET['start'] ?? 0)),
         );
 
         $template = "@moresecurity/forms/config.form.html.twig";
         TemplateRenderer::getInstance()->display($template, [
             'item' => $config,
-            'geoblock_country_choices'    => PluginMoresecurityGeoip::getCountryNames(),
-            'geoblock_countries_selected' => PluginMoresecurityLimiter::parseList((string) ($config->fields['geoblock_countries'] ?? '')),
-            'geoip_database_ready'        => file_exists(PluginMoresecurityGeoip::getDatabasePath()),
-            // El login por credenciales de la API REST no pasa por el plugin.
-            'api_login_unprotected'       => !empty($CFG_GLPI['enable_api']) && !empty($CFG_GLPI['enable_api_login_credentials']),
+            'geoblock_country_choices'    => Geoip::getCountryNames(),
+            'geoblock_countries_selected' => Limiter::parseList((string) ($config->fields['geoblock_countries'] ?? '')),
+            'geoip_database_ready'        => file_exists(Geoip::getDatabasePath()),
+            'can_see_blocks'              => $can_see_blocks,
             'blocked_filters'  => $blocks['filters'],
             'blocked_filter_query' => http_build_query(['filters' => $blocks['filters']]),
             'blocked_sort'     => $blocks['sort'],
@@ -211,7 +235,7 @@ class PluginMoresecurityConfig extends CommonDBTM
         // ofrece códigos reales, pero el POST puede estar manipulado).
         if (
             array_key_exists('geoblock_mode', $input)
-            && !in_array($input['geoblock_mode'], PluginMoresecurityGeoip::MODES, true)
+            && !in_array($input['geoblock_mode'], Geoip::MODES, true)
         ) {
             unset($input['geoblock_mode']);
         }
@@ -219,20 +243,20 @@ class PluginMoresecurityConfig extends CommonDBTM
             $values = is_array($input['geoblock_countries'])
                 ? $input['geoblock_countries']
                 : explode(',', (string) $input['geoblock_countries']);
-            $valid  = array_keys(PluginMoresecurityGeoip::getCountryNames());
+            $valid  = array_keys(Geoip::getCountryNames());
             $input['geoblock_countries'] = implode(',', array_intersect(array_map('strval', $values), $valid));
         }
 
         // "Solo estos países" sin ningún país rechazaría todos los logins de
         // direcciones enrutables: no se permite guardar esa combinación.
-        $mode      = $input['geoblock_mode'] ?? ($this->fields['geoblock_mode'] ?? PluginMoresecurityGeoip::MODE_DISABLED);
+        $mode      = $input['geoblock_mode'] ?? ($this->fields['geoblock_mode'] ?? Geoip::MODE_DISABLED);
         $countries = $input['geoblock_countries'] ?? ($this->fields['geoblock_countries'] ?? '');
-        if ($mode === PluginMoresecurityGeoip::MODE_ALLOW && trim((string) $countries) === '') {
-            $input['geoblock_mode'] = PluginMoresecurityGeoip::MODE_DISABLED;
+        if ($mode === Geoip::MODE_ALLOW && trim((string) $countries) === '') {
+            $input['geoblock_mode'] = Geoip::MODE_DISABLED;
             Session::addMessageAfterRedirect(
                 __('Geoblocking was not enabled: "Only allow these countries" needs at least one country.', 'moresecurity'),
                 true,
-                WARNING
+                WARNING,
             );
         }
 
@@ -258,7 +282,7 @@ class PluginMoresecurityConfig extends CommonDBTM
             Session::addMessageAfterRedirect(
                 __('The account lockout threshold must be greater than the IP lockout threshold. It has been adjusted automatically.', 'moresecurity'),
                 true,
-                WARNING
+                WARNING,
             );
         }
 
@@ -287,17 +311,17 @@ class PluginMoresecurityConfig extends CommonDBTM
      */
     public static function getActiveBlocks(array $filters, ?string $sort, string $order, int $limit, int $start): array
     {
-        $labels = PluginMoresecurityAttemptLog::getTypeLabels();
+        $labels = AttemptLog::getTypeLabels();
         $rows   = [];
 
-        foreach (PluginMoresecurityLogin::getBlocked() as $row) {
-            $rows[] = self::mapBlockRow('account', PluginMoresecurityAttemptLog::EVENT_LOGIN, $labels, $row, 'login', 'login');
+        foreach (Login::getBlocked() as $row) {
+            $rows[] = self::mapBlockRow('account', AttemptLog::EVENT_LOGIN, $labels, $row, 'login', 'login');
         }
-        foreach (PluginMoresecurityLoginip::getBlocked() as $row) {
-            $rows[] = self::mapBlockRow('ip', PluginMoresecurityAttemptLog::EVENT_LOGIN_IP, $labels, $row, 'ip', 'ip');
+        foreach (Loginip::getBlocked() as $row) {
+            $rows[] = self::mapBlockRow('ip', AttemptLog::EVENT_LOGIN_IP, $labels, $row, 'ip', 'ip');
         }
-        foreach (PluginMoresecurityLostpassword::getBlocked() as $row) {
-            $rows[] = self::mapBlockRow('email', PluginMoresecurityAttemptLog::EVENT_RESET_EMAIL, $labels, $row, 'email', 'email');
+        foreach (Lostpassword::getBlocked() as $row) {
+            $rows[] = self::mapBlockRow('email', AttemptLog::EVENT_RESET_EMAIL, $labels, $row, 'email', 'email');
         }
         $total = count($rows);
 
@@ -423,9 +447,9 @@ class PluginMoresecurityConfig extends CommonDBTM
         }
 
         $done = match ($type) {
-            'account' => PluginMoresecurityLogin::unblock($value),
-            'ip'      => PluginMoresecurityLoginip::unblock($value),
-            'email'   => PluginMoresecurityLostpassword::unblock($value),
+            'account' => Login::unblock($value),
+            'ip'      => Loginip::unblock($value),
+            'email'   => Lostpassword::unblock($value),
             default   => false,
         };
         if ($done) {
@@ -446,14 +470,14 @@ class PluginMoresecurityConfig extends CommonDBTM
         }
 
         $valid = [];
-        foreach (PluginMoresecurityLimiter::parseList($value) as $entry) {
+        foreach (Limiter::parseList($value) as $entry) {
             if (filter_var($entry, FILTER_VALIDATE_IP) !== false) {
-                $valid[] = PluginMoresecurityLimiter::canonicalIp($entry);
+                $valid[] = Limiter::canonicalIp($entry);
             } else {
                 Session::addMessageAfterRedirect(
                     sprintf(__('Ignored invalid IP entry: %s', 'moresecurity'), htmlescape($entry)),
                     false,
-                    ERROR
+                    ERROR,
                 );
             }
         }
@@ -508,6 +532,7 @@ class PluginMoresecurityConfig extends CommonDBTM
      */
     public static function install(Migration $migration): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $default_charset = DBConnection::getDefaultCharset();

@@ -1,39 +1,50 @@
-includes:
-    - ../../vendor/glpi-project/phpstan-glpi/extension.neon
-    - ../../vendor/phpstan/phpstan-deprecation-rules/rules.neon
-    - ../../vendor/thecodingmachine/phpstan-safe-rule/phpstan-safe-rule.neon
-
 parameters:
+    parallel:
+        maximumNumberOfProcesses: 2
     level: 5
+    bootstrapFiles:
+        - ../../vendor/autoload.php
+        - vendor/autoload.php
+        - setup.php
     paths:
+        - src
         - front
-        - inc
         - hook.php
         - setup.php
+        - tools/phpstan/rules
+    excludePaths:
+        - '**/vendor/*'
+        - '**/tests/*'
+        - '**/tools/*'
     scanDirectories:
         - ../../src
-        - vendor
-    bootstrapFiles:
-        - ../../stubs/glpi_constants.php
-        - ../../vendor/autoload.php
-        - setup.php
+        - tools/phpstan/rules
+    reportUnmatchedIgnoredErrors: false
     treatPhpDocTypesAsCertain: false
     ignoreErrors:
-        # Login/password-reset scripts and the post_init gate must end the request
-        # themselves: they answer with a generic error page and stop before the
-        # core routes the request (see plugin_moresecurity_deny(): never).
+        # Core constant defined in src/autoload/constants.php, which cannot be
+        # added to the bootstrap without breaking the analysis.
         -
-            identifier: glpi.forbidExit
-            paths:
-                - hook.php
-                - front/lostpassword.form.php
-        # Same reason: the gate runs in post_init, before any Symfony response
-        # exists, so the status code cannot be set on a Response object.
-        -
-            identifier: glpi.forbidHttpResponseCode
-            path: hook.php
-        # `die()` as GLPI's standard "direct access" guard at the top of every
-        # class file and as the install-time "table creation failed" abort.
-        -
-            identifier: glpi.forbidExit
-            path: inc/*.php
+            message: '#Constant GLPI_(SESSION_DIR|PLUGIN_DOC_DIR) not found#'
+            identifier: constant.notFound
+rules:
+    - GlpiProject\Tools\PHPStan\Rules\GlobalVarTypeRule
+services:
+    -
+        class: CustomPHPStanRules\HardcodedPasswordRule
+        tags: [phpstan.rules.rule]
+    -
+        class: CustomPHPStanRules\UnsafeFunctionsRule
+        tags: [phpstan.rules.rule]
+    -
+        class: CustomPHPStanRules\InputValidationRule
+        tags: [phpstan.rules.rule]
+    -
+        class: CustomPHPStanRules\SensitiveInfoExposureRule
+        tags: [phpstan.rules.rule]
+    -
+        class: CustomPHPStanRules\SqlInjectionRule
+        tags: [phpstan.rules.rule]
+    -
+        class: CustomPHPStanRules\PermissionControlRule
+        tags: [phpstan.rules.rule]

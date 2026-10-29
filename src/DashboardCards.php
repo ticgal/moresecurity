@@ -29,6 +29,11 @@
  * -------------------------------------------------------------------------
  */
 
+namespace GlpiPlugin\Moresecurity;
+
+use Session;
+use Toolbox;
+
 use function Safe\strtotime;
 
 if (!defined('GLPI_ROOT')) {
@@ -44,7 +49,7 @@ if (!defined('GLPI_ROOT')) {
  * (actionable, banning them is safe), while identifiers are victims
  * (banning them would lock out the very users being attacked).
  */
-class PluginMoresecurityDashboardCards
+class DashboardCards
 {
     /** @var array<string,int> time-range slug => window size in hours */
     private const RANGES = [
@@ -67,18 +72,18 @@ class PluginMoresecurityDashboardCards
         // ajax/dashboard.php solo exige poder ver un dashboard: aplicar aquí el
         // derecho del Security log (SEV-01). Sin sesión (dashboard embebido con
         // token) no se filtra, lo protege el token.
-        if (Session::getLoginUserID() && !Session::haveRight(PluginMoresecurityAttemptLog::$rightname, READ)) {
+        if (!Session::getLoginUserID() || !Session::haveRight(AttemptLog::$rightname, READ)) {
             return $cards;
         }
 
         foreach (self::RANGES as $slug => $hours) {
             $cards["moresecurity_top_attacking_ips_{$slug}"] = [
                 'widgettype' => ['pie', 'donut', 'bar', 'hbar', 'multipleNumber', 'summaryNumbers'],
-                'itemtype'   => PluginMoresecurityAttemptLog::class,
+                'itemtype'   => AttemptLog::class,
                 'group'      => __s('More Security'),
                 'label'      => sprintf(
                     __s('Top attacking IPs (%s)'),
-                    __s(self::RANGE_LABELS[$slug])
+                    __s(self::RANGE_LABELS[$slug]),
                 ),
                 'provider'   => self::class . "::provideTopAttackingIps{$slug}",
                 'cache'      => false,
@@ -86,11 +91,11 @@ class PluginMoresecurityDashboardCards
 
             $cards["moresecurity_most_targeted_accounts_{$slug}"] = [
                 'widgettype' => ['pie', 'donut', 'bar', 'hbar', 'multipleNumber', 'summaryNumbers'],
-                'itemtype'   => PluginMoresecurityAttemptLog::class,
+                'itemtype'   => AttemptLog::class,
                 'group'      => __s('More Security'),
                 'label'      => sprintf(
                     __s('Most targeted accounts (%s)'),
-                    __s(self::RANGE_LABELS[$slug])
+                    __s(self::RANGE_LABELS[$slug]),
                 ),
                 'provider'   => self::class . "::provideMostTargetedAccounts{$slug}",
                 'cache'      => false,
@@ -98,11 +103,11 @@ class PluginMoresecurityDashboardCards
 
             $cards["moresecurity_top_offending_countries_{$slug}"] = [
                 'widgettype' => ['stackedbars', 'stackedHBars', 'bars', 'hBars'],
-                'itemtype'   => PluginMoresecurityAttemptLog::class,
+                'itemtype'   => AttemptLog::class,
                 'group'      => __s('More Security'),
                 'label'      => sprintf(
                     __s('Top offending countries (%s)'),
-                    __s(self::RANGE_LABELS[$slug])
+                    __s(self::RANGE_LABELS[$slug]),
                 ),
                 'provider'   => self::class . "::provideTopOffendingCountries{$slug}",
                 'cache'      => false,
@@ -159,7 +164,7 @@ class PluginMoresecurityDashboardCards
 
     private static function buildIpData(int $hours, string $rangeSlug): array
     {
-        $rows  = PluginMoresecurityAttemptLog::getTopAttackingIps($hours);
+        $rows  = AttemptLog::getTopAttackingIps($hours);
         $label = sprintf(__('Top attacking IPs (%s)'), __(self::RANGE_LABELS[$rangeSlug]));
 
         if (empty($rows)) {
@@ -172,8 +177,8 @@ class PluginMoresecurityDashboardCards
                 'number' => (int) $row['total'],
                 'label'  => $row['ip'],
                 'url'    => self::buildDrilldownUrl($hours, 'ip', $row['ip'], [
-                    PluginMoresecurityAttemptLog::EVENT_LOGIN_IP,
-                    PluginMoresecurityAttemptLog::EVENT_RESET_IP,
+                    AttemptLog::EVENT_LOGIN_IP,
+                    AttemptLog::EVENT_RESET_IP,
                 ]),
             ];
         }
@@ -187,7 +192,7 @@ class PluginMoresecurityDashboardCards
 
     private static function buildAccountData(int $hours, string $rangeSlug): array
     {
-        $rows  = PluginMoresecurityAttemptLog::getMostTargetedAccounts($hours);
+        $rows  = AttemptLog::getMostTargetedAccounts($hours);
         $label = sprintf(__('Most targeted accounts (%s)'), __(self::RANGE_LABELS[$rangeSlug]));
 
         if (empty($rows)) {
@@ -201,8 +206,8 @@ class PluginMoresecurityDashboardCards
                 // El identificador lo escribe un anónimo (login_name): sin marcado en la etiqueta del gráfico.
                 'label'  => str_replace(['<', '>', '&', '"', "'"], '', $row['identifier']),
                 'url'    => self::buildDrilldownUrl($hours, 'identifier', $row['identifier'], [
-                    PluginMoresecurityAttemptLog::EVENT_LOGIN,
-                    PluginMoresecurityAttemptLog::EVENT_RESET_EMAIL,
+                    AttemptLog::EVENT_LOGIN,
+                    AttemptLog::EVENT_RESET_EMAIL,
                 ]),
             ];
         }
@@ -216,7 +221,7 @@ class PluginMoresecurityDashboardCards
 
     private static function buildCountryData(int $hours, string $rangeSlug): array
     {
-        $breakdown = PluginMoresecurityAttemptLog::getTopCountriesByType($hours);
+        $breakdown = AttemptLog::getTopCountriesByType($hours);
 
         $label = sprintf(__('Top offending countries (%s)'), __(self::RANGE_LABELS[$rangeSlug]));
 
@@ -235,11 +240,11 @@ class PluginMoresecurityDashboardCards
             ];
         }
 
-        $type_labels = PluginMoresecurityAttemptLog::getTypeLabels();
+        $type_labels = AttemptLog::getTypeLabels();
 
         $labels = [];
         foreach (array_keys($breakdown['countries']) as $country) {
-            $labels[] = PluginMoresecurityGeoip::getCountryDisplayName($country);
+            $labels[] = Geoip::getCountryDisplayName($country);
         }
 
         $series = [];
@@ -306,7 +311,7 @@ class PluginMoresecurityDashboardCards
             ],
         ];
 
-        return PluginMoresecurityAttemptLog::getSearchURL() . '?' . Toolbox::append_params($criteria);
+        return AttemptLog::getSearchURL() . '?' . Toolbox::append_params($criteria);
     }
 
     /**
@@ -325,7 +330,7 @@ class PluginMoresecurityDashboardCards
         // regardless of ip/date, instead of just the two events for this
         // specific ip/identifier and window).
         //
-        // Drills down into the granular attempt log (PluginMoresecurityAttemptLog),
+        // Drills down into the granular attempt log (AttemptLog),
         // not the counter table — the cards themselves are now sourced from the
         // log (see getTopAttackingIps()/getMostTargetedAccounts()), so the
         // drill-down has to land on the same data or the numbers won't match
@@ -366,6 +371,6 @@ class PluginMoresecurityDashboardCards
             ],
         ];
 
-        return PluginMoresecurityAttemptLog::getSearchURL() . '?' . Toolbox::append_params($criteria);
+        return AttemptLog::getSearchURL() . '?' . Toolbox::append_params($criteria);
     }
 }

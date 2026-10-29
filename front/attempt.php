@@ -31,19 +31,21 @@
 
 use Glpi\Application\View\TemplateRenderer;
 use Glpi\Exception\Http\NotFoundHttpException;
+use GlpiPlugin\Moresecurity\AttemptLog;
 
 $plugin = new Plugin();
 if (!$plugin->isInstalled('moresecurity') || !$plugin->isActivated('moresecurity')) {
     throw new NotFoundHttpException();
 }
 
-Session::checkRight(PluginMoresecurityAttemptLog::$rightname, READ);
+Session::checkRight(AttemptLog::$rightname, READ);
+AttemptLog::checkReAuthenticationOrRedirect();
 
 Html::header(
-    PluginMoresecurityAttemptLog::getTypeName(Session::getPluralNumber()),
-    $_SERVER['PHP_SELF'],
+    AttemptLog::getTypeName(Session::getPluralNumber()),
+    AttemptLog::getSearchURL(false),
     'admin',
-    PluginMoresecurityAttemptLog::class
+    AttemptLog::class,
 );
 
 // Two separate front files, not a `?view=` query param: GLPI's Search class
@@ -55,6 +57,6 @@ TemplateRenderer::getInstance()->display('@moresecurity/attempt_tabs.html.twig',
     'active_view' => 'log',
 ]);
 
-Search::show(PluginMoresecurityAttemptLog::class);
+Search::show(AttemptLog::class);
 
 Html::footer();

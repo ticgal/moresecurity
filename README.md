@@ -10,6 +10,8 @@
 Adds brute-force protection to the GLPI login and password-reset forms.
 ### Setup
 Install it like any other GLPI plugin from Marketplace, or download and install it in the plugin folder.
+### Compatibility
+More Security 3.x requires GLPI 12.0 (12.0.0 or later, below 12.1.0). Use the 2.x releases on GLPI 11.
 ### How to use
 Once activated, More Security automatically protects the login and "forgotten password" forms — no
 extra action is needed from end users. Administrators configure the thresholds from the plugin's
@@ -91,13 +93,14 @@ entries older than its parameter (30 days by default). The log keeps at most 200
 data: adjust both actions to your retention policy.
 
 ### Scope and limits
-- **Web login form only.** The protections (attempt limits, IP blocking, geoblocking) apply to the GLPI login and
-  password-reset forms. Logins through other channels (the legacy REST API `apirest.php/initSession` with
-  credentials, or the OAuth *password* grant of the High-Level API) do not go through the plugin and are not
-  counted or geoblocked. If you do not need them, disable *Enable login with credentials* in **Setup > General >
-  API** and use API tokens; otherwise apply geographic restrictions at your reverse proxy as well. The plugin's
-  configuration tab shows a warning while that API login is enabled. CalDAV (`/caldav.php`, HTTP Basic) is covered:
-  it honours blocks and geoblocking and counts failed passwords like the web form.
+- **Channels covered.** The protections (attempt limits, IP blocking, whitelist, geoblocking) apply to the GLPI
+  login and password-reset forms and to the other channels that verify a password: CalDAV (`/caldav.php`, HTTP
+  Basic), the legacy REST API (`apirest.php/initSession` with credentials, and `lostPassword`) and the OAuth
+  *password* grant of the High-Level API (`api.php/token`). They are only checked while the API is enabled, since
+  otherwise the core never verifies a password there. A successful login releases the account counter.
+- **Channels not covered.** The "remember me" cookie and single sign-on (CAS, x509, remote user) do not verify a GLPI
+  password, so there is nothing to count. Authentication with an API *user token* is not covered either: it is a
+  random secret, not a password.
 - **The Security log is global.** Attempts happen before a session and an entity exist, so the log and the
   dashboard cards are not filtered by entity. Grant the *More Security > Security log* right (and the dashboard
   cards, which require it) only to profiles that may see the logins, emails and IPs of the whole instance.

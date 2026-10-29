@@ -29,15 +29,22 @@
  * -------------------------------------------------------------------------
  */
 
+namespace GlpiPlugin\Moresecurity;
+
+use CommonDBTM;
+use DBConnection;
+use DBmysql;
 use Glpi\Application\View\TemplateRenderer;
 use Glpi\DBAL\QueryExpression;
 use Glpi\DBAL\QueryFunction;
+use Migration;
+use RuntimeException;
 
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
 }
 
-class PluginMoresecurityLostpassword extends CommonDBTM
+class Lostpassword extends CommonDBTM
 {
     /**
      * Reserva atómica de una solicitud de recuperación (MS-04/MS-06). Se
@@ -48,7 +55,7 @@ class PluginMoresecurityLostpassword extends CommonDBTM
      */
     public static function reserve(string $email, string $ip): ?string
     {
-        $config   = PluginMoresecurityConfig::getInstance();
+        $config   = Config::getInstance();
         $reset    = (int) $config->fields['attempts_reset'];
         $track_ip = $ip !== '' && (int) $config->fields['ip_max_attempts'] > 0;
         if ($reset <= 0 && !$track_ip) {
@@ -57,17 +64,17 @@ class PluginMoresecurityLostpassword extends CommonDBTM
 
         $keys = ['mail:' . $email];
         if ($ip !== '') {
-            $keys[] = 'ip:' . PluginMoresecurityLimiter::bucketIp($ip);
+            $keys[] = 'ip:' . Limiter::bucketIp($ip);
         }
 
-        [$locked, $result] = PluginMoresecurityLimiter::withLocks(
+        [$locked, $result] = Limiter::withLocks(
             $keys,
             function () use ($email, $ip, $config, $reset, $track_ip) {
-                if ($track_ip && PluginMoresecurityLoginip::isBlocked($ip)) {
+                if ($track_ip && Loginip::isBlocked($ip)) {
                     return 'ip';
                 }
                 if ($reset > 0) {
-                    if (PluginMoresecurityLimiter::isBlockedNow(self::getTable(), ['email' => $email])) {
+                    if (Limiter::isBlockedNow(self::getTable(), ['email' => $email])) {
                         return 'email';
                     }
                     // MS-05: umbral alcanzado sin caducidad registrada.
@@ -76,15 +83,15 @@ class PluginMoresecurityLostpassword extends CommonDBTM
                     }
                 }
                 if ($track_ip) {
-                    PluginMoresecurityLoginip::addTry(PluginMoresecurityLimiter::ANON_BUCKET, $ip);
-                    PluginMoresecurityLoginip::applyIpBlock($ip);
+                    Loginip::addTry(Limiter::ANON_BUCKET, $ip);
+                    Loginip::applyIpBlock($ip);
                 }
                 if ($reset > 0) {
                     self::addTry($email, $reset, $config);
                 }
 
                 return null;
-            }
+            },
         );
 
         return $locked ? $result : 'busy';
@@ -92,16 +99,17 @@ class PluginMoresecurityLostpassword extends CommonDBTM
 
     private static function window(): string
     {
-        return "`last_try` IS NOT NULL AND `last_try` < (NOW() - INTERVAL " . (int) PluginMoresecurityLimiter::TIME_WINDOW . " SECOND)";
+        return "`last_try` IS NOT NULL AND `last_try` < (NOW() - INTERVAL " . (int) Limiter::TIME_WINDOW . " SECOND)";
     }
 
-    private static function setBlocked(string $email, PluginMoresecurityConfig $config): void
+    private static function setBlocked(string $email, Config $config): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $DB->update(self::getTable(), [
-            'blocked' => PluginMoresecurityLimiter::fromNow(
-                max(1, min((int) $config->fields['time_reset'], PluginMoresecurityLimiter::HARD_CEILING))
+            'blocked' => Limiter::fromNow(
+                max(1, min((int) $config->fields['time_reset'], Limiter::HARD_CEILING)),
             ),
         ], ['email' => $email]);
     }
@@ -110,8 +118,9 @@ class PluginMoresecurityLostpassword extends CommonDBTM
      * Si el contador alcanzó el umbral sin bloqueo (umbral bajado o activado
      * después de acumular solicitudes), fija ahora una caducidad.
      */
-    private static function reconcile(string $email, int $threshold, PluginMoresecurityConfig $config): bool
+    private static function reconcile(string $email, int $threshold, Config $config): bool
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $row = $DB->request([
@@ -119,7 +128,7 @@ class PluginMoresecurityLostpassword extends CommonDBTM
             'FROM'   => self::getTable(),
             'WHERE'  => ['email' => $email],
         ])->current();
-        if (!$row || ($row['idle'] !== null && (int) $row['idle'] > PluginMoresecurityLimiter::TIME_WINDOW) || $row['blocked'] !== null || (int) $row['email_try'] < $threshold) {
+        if (!$row || ($row['idle'] !== null && (int) $row['idle'] > Limiter::TIME_WINDOW) || $row['blocked'] !== null || (int) $row['email_try'] < $threshold) {
             return false;
         }
         self::setBlocked($email, $config);
@@ -127,8 +136,9 @@ class PluginMoresecurityLostpassword extends CommonDBTM
         return true;
     }
 
-    private static function addTry(string $email, int $threshold, PluginMoresecurityConfig $config): void
+    private static function addTry(string $email, int $threshold, Config $config): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $table   = self::getTable();
@@ -141,7 +151,7 @@ class PluginMoresecurityLostpassword extends CommonDBTM
 			 ON DUPLICATE KEY UPDATE
 				`email_try` = IF($stale, 1, `email_try` + 1),
 				`blocked`   = IF($stale, NULL, `blocked`),
-				`last_try`  = NOW()"
+				`last_try`  = NOW()",
         ) or throw new RuntimeException('More Security: could not record the attempt');
 
         $row = $DB->request(['SELECT' => 'email_try', 'FROM' => $table, 'WHERE' => ['email' => $email]])->current();
@@ -152,6 +162,7 @@ class PluginMoresecurityLostpassword extends CommonDBTM
 
     public static function unblock(string $email): bool
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $DB->update(self::getTable(), [
@@ -165,12 +176,13 @@ class PluginMoresecurityLostpassword extends CommonDBTM
 
     public static function getBlocked(int $limit = 100): array
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         return iterator_to_array($DB->request([
-            'SELECT' => ['email', 'email_try', 'blocked', 'last_try', PluginMoresecurityLimiter::secondsUntil('blocked')],
+            'SELECT' => ['email', 'email_try', 'blocked', 'last_try', Limiter::secondsUntil('blocked')],
             'FROM'   => self::getTable(),
-            'WHERE'  => PluginMoresecurityLimiter::activeBlockCriteria(),
+            'WHERE'  => Limiter::activeBlockCriteria(),
             'ORDER'  => 'blocked DESC',
             'LIMIT'  => $limit,
         ]), false);
@@ -178,7 +190,7 @@ class PluginMoresecurityLostpassword extends CommonDBTM
 
     public static function purge(int $retention_days, int $batch = 1000, int $max_batches = 50): int
     {
-        return PluginMoresecurityRetention::purgeTable(self::getTable(), $retention_days, $batch, $max_batches);
+        return Retention::purgeTable(self::getTable(), $retention_days, $batch, $max_batches);
     }
 
     public static function showPasswordForgetRequestForm()
@@ -196,6 +208,7 @@ class PluginMoresecurityLostpassword extends CommonDBTM
      */
     public static function install(Migration $migration): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $default_charset = DBConnection::getDefaultCharset();
@@ -229,12 +242,13 @@ class PluginMoresecurityLostpassword extends CommonDBTM
             $migration->addKey($table, 'email', 'email', 'UNIQUE');
             $migration->addKey($table, 'last_try');
             $migration->migrationOneTable($table);
-            PluginMoresecurityLimiter::capLegacyBlocks($table);
+            Limiter::capLegacyBlocks($table);
         }
     }
 
     private static function mergeDuplicateEmails(string $table): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $dups = iterator_to_array($DB->request([

@@ -29,6 +29,13 @@
  * -------------------------------------------------------------------------
  */
 
+namespace GlpiPlugin\Moresecurity;
+
+use CommonDBTM;
+use CronTask;
+use Glpi\DBAL\QueryFunction;
+use Migration;
+
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
 }
@@ -37,7 +44,7 @@ if (!defined('GLPI_ROOT')) {
  * Retención de datos de intentos (MS-08): acción automática diaria que borra
  * por lotes las filas inactivas y sin bloqueo vigente.
  */
-class PluginMoresecurityRetention extends CommonDBTM
+class Retention extends CommonDBTM
 {
     public const RETENTION_DAYS = 7;
 
@@ -70,7 +77,7 @@ class PluginMoresecurityRetention extends CommonDBTM
     public static function cronPurgeLogs($task): int
     {
         $days  = max(1, (int) ($task->fields['param'] ?? self::LOG_RETENTION_DAYS));
-        $total = PluginMoresecurityAttemptLog::purge($days);
+        $total = AttemptLog::purge($days);
 
         $task->addVolume($total);
 
@@ -82,9 +89,9 @@ class PluginMoresecurityRetention extends CommonDBTM
      */
     public static function cronPurge($task): int
     {
-        $total  = PluginMoresecurityLogin::purge(self::RETENTION_DAYS);
-        $total += PluginMoresecurityLoginip::purge(self::RETENTION_DAYS);
-        $total += PluginMoresecurityLostpassword::purge(self::RETENTION_DAYS);
+        $total  = Login::purge(self::RETENTION_DAYS);
+        $total += Loginip::purge(self::RETENTION_DAYS);
+        $total += Lostpassword::purge(self::RETENTION_DAYS);
 
         $task->addVolume($total);
 
@@ -98,19 +105,30 @@ class PluginMoresecurityRetention extends CommonDBTM
      */
     public static function purgeTable(string $table, int $retention_days, int $batch = 1000, int $max_batches = 50): int
     {
+        /** @var \DBmysql $DB */
         global $DB;
+
+        $now   = QueryFunction::now();
+        $where = [
+            ['OR' => [['blocked' => null], ['blocked' => ['<=', $now]]]],
+            ['OR' => [['last_try' => null], ['last_try' => ['<', QueryFunction::dateSub($now, max(1, $retention_days), 'DAY')]]]],
+        ];
 
         $deleted = 0;
         for ($i = 0; $i < $max_batches; $i++) {
-            $DB->doQuery(
-                "DELETE FROM " . DBmysql::quoteName($table) . "
-                 WHERE (`blocked` IS NULL OR `blocked` <= NOW())
-                   AND (`last_try` IS NULL OR `last_try` < (NOW() - INTERVAL " . max(1, $retention_days) . " DAY))
-                 LIMIT " . (int) $batch
-            );
-            $count = (int) $DB->affectedRows();
-            $deleted += $count;
-            if ($count < $batch) {
+            // DBmysql::delete() no admite LIMIT: ids del lote y borrado por clave.
+            $ids = array_column(iterator_to_array($DB->request([
+                'SELECT' => 'id',
+                'FROM'   => $table,
+                'WHERE'  => $where,
+                'LIMIT'  => $batch,
+            ]), false), 'id');
+            if ($ids === []) {
+                break;
+            }
+            $DB->delete($table, ['id' => $ids]);
+            $deleted += count($ids);
+            if (count($ids) < $batch) {
                 break;
             }
         }
@@ -127,7 +145,7 @@ class PluginMoresecurityRetention extends CommonDBTM
             [
                 'comment' => __('Purge old login and password reset attempt records', 'moresecurity'),
                 'mode'    => CronTask::MODE_INTERNAL,
-            ]
+            ],
         );
 
         CronTask::register(
@@ -138,7 +156,7 @@ class PluginMoresecurityRetention extends CommonDBTM
                 'comment' => __('Purge security logs based on retention policy', 'moresecurity'),
                 'mode'    => CronTask::MODE_INTERNAL,
                 'param'   => self::LOG_RETENTION_DAYS,
-            ]
+            ],
         );
     }
 

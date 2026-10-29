@@ -29,8 +29,14 @@
  * -------------------------------------------------------------------------
  */
 
+namespace GlpiPlugin\Moresecurity;
+
+use CommonGLPI;
 use Glpi\Application\View\TemplateRenderer;
 use Glpi\DBAL\QueryExpression;
+use Migration;
+use ProfileRight;
+use Session;
 
 use function Safe\ob_get_clean;
 use function Safe\ob_start;
@@ -39,9 +45,9 @@ if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
 }
 
-class PluginMoresecurityProfile extends Profile
+class Profile extends CommonGLPI
 {
-    public static $rightname = 'profile';
+    public static string $rightname = 'profile';
 
     public static function getTypeName($nb = 0): string
     {
@@ -53,9 +59,19 @@ class PluginMoresecurityProfile extends Profile
         return 'ti ti-shield-plus';
     }
 
+    /**
+     * Los derechos de este plugin son solo centrales: en un perfil de interfaz
+     * simplificada no se ofrecen (el core los descartaría, pero la pantalla no
+     * debe invitar a concederlos).
+     */
+    private static function isCentralProfile(CommonGLPI $item): bool
+    {
+        return ($item->fields['interface'] ?? 'central') === 'central';
+    }
+
     public function getTabNameForItem(CommonGLPI $item, $withtemplate = 0): string|array
     {
-        if ($item::getType() === Profile::getType()) {
+        if ($item::getType() === \Profile::getType() && self::isCentralProfile($item)) {
             return self::createTabEntry(self::getTypeName(1));
         }
 
@@ -71,16 +87,16 @@ class PluginMoresecurityProfile extends Profile
             [
                 'rights'   => [READ => __('Read')],
                 'label'    => __('Security log', 'moresecurity'),
-                'itemtype' => PluginMoresecurityAttemptLog::class,
-                'field'    => PluginMoresecurityAttemptLog::$rightname,
+                'itemtype' => AttemptLog::class,
+                'field'    => AttemptLog::$rightname,
             ],
         ];
     }
 
     public static function displayTabContentForItem(CommonGLPI $item, $tabnum = 1, $withtemplate = 0): bool
     {
-        if ($item->getType() === Profile::getType()) {
-            /** @var Profile $item */
+        if ($item->getType() === \Profile::getType() && self::isCentralProfile($item)) {
+            /** @var \Profile $item */
             self::displayProfileForm($item);
             return true;
         }
@@ -88,14 +104,14 @@ class PluginMoresecurityProfile extends Profile
         return false;
     }
 
-    public static function displayProfileForm(Profile $profile): void
+    public static function displayProfileForm(\Profile $profile): void
     {
         // La matriz de derechos la genera el núcleo con echo directo: se captura
         // para pintarla dentro de la plantilla y mantener el orden de salida.
         ob_start();
         $profile->displayRightsChoiceMatrix(
             (new self())->getAllRights(),
-            ['canedit' => Session::haveRight(self::$rightname, UPDATE), 'title' => 'More Security']
+            ['canedit' => Session::haveRight(self::$rightname, UPDATE), 'title' => 'More Security'],
         );
         $matrix = ob_get_clean();
 
@@ -111,10 +127,11 @@ class PluginMoresecurityProfile extends Profile
     {
         $migration->displayMessage('Adding More Security profile rights');
 
+        /** @var \DBmysql $DB */
         global $DB;
 
         $rights = [];
-        foreach ([PluginMoresecurityAttemptLog::$rightname] as $rightname) {
+        foreach ([AttemptLog::$rightname] as $rightname) {
             $exists = $DB->request([
                 'FROM'  => ProfileRight::getTable(),
                 'WHERE' => ['name' => $rightname],
@@ -142,7 +159,7 @@ class PluginMoresecurityProfile extends Profile
                 $DB->update(
                     ProfileRight::getTable(),
                     ['rights' => READ],
-                    ['name' => $rights, 'profiles_id' => $config_profiles, 'rights' => 0]
+                    ['name' => $rights, 'profiles_id' => $config_profiles, 'rights' => 0],
                 );
             }
         }
@@ -151,6 +168,6 @@ class PluginMoresecurityProfile extends Profile
     public static function uninstall(Migration $migration): void
     {
         $migration->displayMessage('Removing More Security profile rights');
-        ProfileRight::deleteProfileRights([PluginMoresecurityAttemptLog::$rightname]);
+        ProfileRight::deleteProfileRights([AttemptLog::$rightname]);
     }
 }

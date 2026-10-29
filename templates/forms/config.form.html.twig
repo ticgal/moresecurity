@@ -35,22 +35,11 @@
 {# buttons.html.twig reads `params` directly: define it for strict-variables environments #}
 {% set params = params|default({}) %}
 
-{% if api_login_unprotected %}
-    <div class="alert alert-warning mb-3" role="alert" data-testid="ms-api-warning">
-        <div class="d-flex">
-            <i class="ti ti-alert-triangle fs-2 me-2"></i>
-            <div>
-                {{ __('The REST API is enabled with login by credentials: logins made through it are not limited, blocked, geoblocked or recorded by this plugin. Disable "Enable login with credentials" in Setup > General > API, or use API tokens and restrict the API clients by IP.', 'moresecurity') }}
-            </div>
-        </div>
-    </div>
-{% endif %}
-
 {{ include('components/form/header.html.twig', {'in_twig': true, 'no_header': true}) }}
 
 {% macro ribbon_header(title, icon = 'ti-shield-plus') %}
     <div class="ribbon ribbon-bookmark ribbon-top ribbon-start bg-blue s-1">
-        <i class="ti {{ icon }} fa-2x"></i>
+        <i class="ti {{ icon }} fs-1"></i>
     </div>
     <h4 class="card-title ps-5">{{ title }}</h4>
 {% endmacro %}
@@ -177,6 +166,7 @@
     </div>
 
 {# Bloqueos vigentes: tarjeta única con filtros, orden y paginación #}
+{% if can_see_blocks %}
 <div id="ms-active-blocks-card" class="row mt-4 mb-4" data-testid="ms-active-blocks">
     <div class="col-12">
         <div class="card m-n2 border-0 shadow-none">
@@ -234,6 +224,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 
     {# Trusted reverse proxies #}
     <div class="col-12 mb-4">

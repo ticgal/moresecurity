@@ -29,21 +29,28 @@
  * -------------------------------------------------------------------------
  */
 
+namespace GlpiPlugin\Moresecurity;
+
+use CommonDBTM;
+use DBConnection;
+use DBmysql;
 use Glpi\DBAL\QueryExpression;
 use Glpi\DBAL\QueryFunction;
+use Migration;
+use RuntimeException;
 
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
 }
 
-class PluginMoresecurityLoginip extends CommonDBTM
+class Loginip extends CommonDBTM
 {
-    const TIME_WINDOW = PluginMoresecurityLimiter::TIME_WINDOW;
+    public const TIME_WINDOW = Limiter::TIME_WINDOW;
 
     public static function isBlocked(string $ip): bool
     {
-        $ip = PluginMoresecurityLimiter::bucketIp($ip);
-        return PluginMoresecurityLimiter::isBlockedNow(self::getTable(), ['ip' => $ip]);
+        $ip = Limiter::bucketIp($ip);
+        return Limiter::isBlockedNow(self::getTable(), ['ip' => $ip]);
     }
 
     /**
@@ -52,8 +59,8 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function isIpBlockActive(string $ip): bool
     {
-        $ip = PluginMoresecurityLimiter::bucketIp($ip);
-        $config = PluginMoresecurityConfig::getInstance();
+        $ip = Limiter::bucketIp($ip);
+        $config = Config::getInstance();
 
         return (int) $config->fields['ip_max_attempts'] > 0 && self::isBlocked($ip);
     }
@@ -64,14 +71,14 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function countGeoDenial(string $ip): void
     {
-        $ip = PluginMoresecurityLimiter::bucketIp($ip);
-        $config = PluginMoresecurityConfig::getInstance();
+        $ip = Limiter::bucketIp($ip);
+        $config = Config::getInstance();
         if ((int) $config->fields['ip_max_attempts'] <= 0) {
             return;
         }
 
-        PluginMoresecurityLimiter::withLocks(['ip:' . PluginMoresecurityLimiter::bucketIp($ip)], static function () use ($ip): void {
-            self::addTry(PluginMoresecurityLimiter::ANON_BUCKET, $ip);
+        Limiter::withLocks(['ip:' . Limiter::bucketIp($ip)], static function () use ($ip): void {
+            self::addTry(Limiter::ANON_BUCKET, $ip);
             self::applyIpBlock($ip);
         });
     }
@@ -83,18 +90,19 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function isOverflow(string $login, string $ip): bool
     {
-        $ip = PluginMoresecurityLimiter::bucketIp($ip);
+        $ip = Limiter::bucketIp($ip);
+        /** @var \DBmysql $DB */
         global $DB;
 
         $window = [
             'ip'       => $ip,
-            'last_try' => ['>', PluginMoresecurityLimiter::windowStart()],
+            'last_try' => ['>', Limiter::windowStart()],
         ];
         $identities = $DB->request(['COUNT' => 'c', 'FROM' => self::getTable(), 'WHERE' => $window])->current();
         $known      = $DB->request(['COUNT' => 'c', 'FROM' => self::getTable(), 'WHERE' => $window + ['login' => $login]])->current();
 
         return (int) $known['c'] === 0
-            && (int) $identities['c'] >= PluginMoresecurityLimiter::MAX_IDENTITIES_PER_IP;
+            && (int) $identities['c'] >= Limiter::MAX_IDENTITIES_PER_IP;
     }
 
     /**
@@ -104,7 +112,8 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function clearIpTryForLogin(string $login, string $ip): void
     {
-        $ip = PluginMoresecurityLimiter::bucketIp($ip);
+        $ip = Limiter::bucketIp($ip);
+        /** @var \DBmysql $DB */
         global $DB;
 
         $DB->update(self::getTable(), [
@@ -120,6 +129,7 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function clearTriesForLogin(string $login): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $DB->update(self::getTable(), [
@@ -134,7 +144,8 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function unblock(string $ip): bool
     {
-        $ip = PluginMoresecurityLimiter::bucketIp($ip);
+        $ip = Limiter::bucketIp($ip);
+        /** @var \DBmysql $DB */
         global $DB;
 
         $DB->update(self::getTable(), [
@@ -148,17 +159,18 @@ class PluginMoresecurityLoginip extends CommonDBTM
 
     public static function getBlocked(int $limit = 100): array
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         return iterator_to_array($DB->request([
             'SELECT'  => [
                 'ip',
-                PluginMoresecurityLimiter::maxOf('blocked', 'blocked'),
-                PluginMoresecurityLimiter::maxOf('last_try', 'last_try'),
-                PluginMoresecurityLimiter::secondsUntil(PluginMoresecurityLimiter::maxOf('blocked')),
+                Limiter::maxOf('blocked', 'blocked'),
+                Limiter::maxOf('last_try', 'last_try'),
+                Limiter::secondsUntil(Limiter::maxOf('blocked')),
             ],
             'FROM'    => self::getTable(),
-            'WHERE'   => PluginMoresecurityLimiter::activeBlockCriteria(),
+            'WHERE'   => Limiter::activeBlockCriteria(),
             'GROUPBY' => 'ip',
             'ORDER'   => 'blocked DESC',
             'LIMIT'   => $limit,
@@ -172,7 +184,8 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function addTry(string $login, string $ip): void
     {
-        $ip = PluginMoresecurityLimiter::bucketIp($ip);
+        $ip = Limiter::bucketIp($ip);
+        /** @var \DBmysql $DB */
         global $DB;
 
         $table   = self::getTable();
@@ -185,7 +198,7 @@ class PluginMoresecurityLoginip extends CommonDBTM
              ON DUPLICATE KEY UPDATE
                 `ip_try`   = IF($stale, 1, `ip_try` + 1),
                 `blocked`  = IF($stale, NULL, `blocked`),
-                `last_try` = NOW()"
+                `last_try` = NOW()",
         ) or throw new RuntimeException('More Security: could not record the attempt');
     }
 
@@ -196,10 +209,11 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     public static function applyIpBlock(string $ip): void
     {
-        $ip = PluginMoresecurityLimiter::bucketIp($ip);
+        $ip = Limiter::bucketIp($ip);
+        /** @var \DBmysql $DB */
         global $DB;
 
-        $config = PluginMoresecurityConfig::getInstance();
+        $config = Config::getInstance();
         $max    = (int) $config->fields['ip_max_attempts'];
         if ($max <= 0) {
             return;
@@ -210,25 +224,26 @@ class PluginMoresecurityLoginip extends CommonDBTM
             return;
         }
 
-        $delay = PluginMoresecurityLimiter::backoffDelay(
+        $delay = Limiter::backoffDelay(
             (int) $config->fields['ip_time_blocked'],
             $total - $max,
-            (int) ($config->fields['ip_max_time_blocked'] ?? 0)
+            (int) ($config->fields['ip_max_time_blocked'] ?? 0),
         );
 
         $DB->update(self::getTable(), [
-            'blocked' => PluginMoresecurityLimiter::fromNow($delay),
+            'blocked' => Limiter::fromNow($delay),
         ], ['ip' => $ip]);
     }
 
     private static function sumTriesForIp(string $ip): int
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $row = $DB->request([
             'SELECT' => QueryFunction::sum('ip_try', false, 'total'),
             'FROM'   => self::getTable(),
-            'WHERE'  => ['ip' => $ip, 'last_try' => ['>', PluginMoresecurityLimiter::windowStart()]],
+            'WHERE'  => ['ip' => $ip, 'last_try' => ['>', Limiter::windowStart()]],
         ])->current();
 
         return (int) ($row['total'] ?? 0);
@@ -236,12 +251,13 @@ class PluginMoresecurityLoginip extends CommonDBTM
 
     public static function countDistinctIpsForLogin(string $login): int
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $row = $DB->request([
             'SELECT' => QueryFunction::count('ip', true, 'c'),
             'FROM'   => self::getTable(),
-            'WHERE'  => ['login' => $login, 'last_try' => ['>', PluginMoresecurityLimiter::windowStart()]],
+            'WHERE'  => ['login' => $login, 'last_try' => ['>', Limiter::windowStart()]],
         ])->current();
 
         return (int) ($row['c'] ?? 0);
@@ -249,11 +265,12 @@ class PluginMoresecurityLoginip extends CommonDBTM
 
     public static function purge(int $retention_days, int $batch = 1000, int $max_batches = 50): int
     {
-        return PluginMoresecurityRetention::purgeTable(self::getTable(), $retention_days, $batch, $max_batches);
+        return Retention::purgeTable(self::getTable(), $retention_days, $batch, $max_batches);
     }
 
     public static function install(Migration $migration): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $default_charset   = DBConnection::getDefaultCharset();
@@ -285,7 +302,7 @@ class PluginMoresecurityLoginip extends CommonDBTM
             $migration->addKey($table, ['login', 'ip'], 'login_ip', 'UNIQUE');
             $migration->addKey($table, 'last_try');
             $migration->migrationOneTable($table);
-            PluginMoresecurityLimiter::capLegacyBlocks($table);
+            Limiter::capLegacyBlocks($table);
         }
     }
 
@@ -295,6 +312,7 @@ class PluginMoresecurityLoginip extends CommonDBTM
      */
     private static function mergeDuplicates(string $table): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $dups = iterator_to_array($DB->request([

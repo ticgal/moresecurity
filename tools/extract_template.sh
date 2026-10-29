@@ -55,14 +55,16 @@ fi
 # Clean existing file
 rm -f $LOCALES/$POTFILE && touch $LOCALES/$POTFILE >/dev/null
 
+# LC_ALL=C evita que las referencias de Twig salgan como "entrada estándar:N".
+export LC_ALL=C
 echo Searching PHP files...
 # Append locales from PHP
-xgettext $(find -type f -name "*.php") -o $LOCALES/$POTFILE -L PHP --add-comments=TRANS --from-code=UTF-8 --force-po --join-existing \
+xgettext $(find . \( -path ./vendor -o -path ./tools -o -path ./docs \) -prune -o -type f -name "*.php" -print) -o $LOCALES/$POTFILE -L PHP --add-comments=TRANS --from-code=UTF-8 --force-po --join-existing \
     --keyword=__:1,2t -d $PLUGINNAME --copyright-holder "TICgal" >/dev/null 2>&1
 
 echo Searching JS files...
 # Append locales from JavaScript
-xgettext $(find -type f -name "*.js") -o $LOCALES/$POTFILE -L JavaScript --add-comments=TRANS --from-code=UTF-8 --force-po --join-existing \
+xgettext $(find . \( -path ./vendor -o -path ./tools -o -path ./docs \) -prune -o -type f -name "*.js" -print) -o $LOCALES/$POTFILE -L JavaScript --add-comments=TRANS --from-code=UTF-8 --force-po --join-existing \
     --keyword=__:1,2t -d $PLUGINNAME --copyright-holder "TICgal" >/dev/null 2>&1
 
 echo Searching TWIG files...

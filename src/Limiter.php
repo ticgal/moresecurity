@@ -29,6 +29,9 @@
  * -------------------------------------------------------------------------
  */
 
+namespace GlpiPlugin\Moresecurity;
+
+use DBmysql;
 use Glpi\DBAL\QueryExpression;
 use Glpi\DBAL\QueryFunction;
 use Safe\Exceptions\SafeExceptionInterface;
@@ -44,7 +47,7 @@ if (!defined('GLPI_ROOT')) {
  * Utilidades comunes del limitador: reloj único (SQL), exclusión mutua por
  * clave, backoff acotado y validación de entradas del solicitante.
  */
-class PluginMoresecurityLimiter
+class Limiter
 {
     // Ventana de inactividad tras la cual se reinician los contadores.
     public const TIME_WINDOW = 43200; // 12 horas
@@ -78,7 +81,9 @@ class PluginMoresecurityLimiter
             return null;
         }
         $value = trim($value);
-        if ($value === '' || strlen($value) > self::MAX_IDENTITY_LENGTH || str_contains($value, "\0")) {
+        // Sin caracteres de control: el identificador acaba en logs de ficheros
+        // (Event::log) donde un salto de línea falsificaría entradas.
+        if ($value === '' || strlen($value) > self::MAX_IDENTITY_LENGTH || preg_match('/[\x00-\x1F\x7F]/', $value) === 1) {
             return null;
         }
 
@@ -110,7 +115,7 @@ class PluginMoresecurityLimiter
     {
         $remote_addr = self::validIp((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
 
-        $config  = PluginMoresecurityConfig::getInstance();
+        $config  = Config::getInstance();
         $proxies = array_map([self::class, 'canonicalIp'], self::parseList((string) ($config->fields['trusted_proxies'] ?? '')));
         $remote_addr = self::canonicalIp($remote_addr);
         if ($remote_addr === '' || $proxies === [] || !in_array($remote_addr, $proxies, true)) {
@@ -213,11 +218,12 @@ class PluginMoresecurityLimiter
      */
     public static function withLocks(array $keys, callable $callback, int $timeout = 5): array
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $names = [];
         foreach (array_unique($keys) as $key) {
-            $names[] = 'moresecurity:' . sha1($key);
+            $names[] = 'moresecurity:' . hash('xxh128', $key);
         }
         sort($names);
 
@@ -287,6 +293,7 @@ class PluginMoresecurityLimiter
      */
     public static function isBlockedNow(string $table, array $where): bool
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         return count($DB->request([
@@ -302,6 +309,7 @@ class PluginMoresecurityLimiter
      */
     public static function capLegacyBlocks(string $table): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $DB->update($table, [

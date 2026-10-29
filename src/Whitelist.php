@@ -29,6 +29,15 @@
  * -------------------------------------------------------------------------
  */
 
+namespace GlpiPlugin\Moresecurity;
+
+use CommonDropdown;
+use DBConnection;
+use Dropdown;
+use Migration;
+use RuntimeException;
+use Session;
+
 use function Safe\inet_ntop;
 use function Safe\inet_pton;
 
@@ -36,15 +45,23 @@ if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
 }
 
-class PluginMoresecurityWhitelist extends CommonDropdown
+class Whitelist extends CommonDropdown
 {
-    public $dohistory = true;
+    public bool $dohistory = true;
 
     // Exención de un control de seguridad global: requiere el mismo
     // derecho que la config del plugin, no el genérico 'dropdown' (UC-05).
-    public static $rightname = 'config';
+    public static string $rightname = 'config';
 
-    public $can_be_translated = false;
+    /**
+     * Same re-authentication the core demands for its own configuration.
+     */
+    protected static function itemTypeRequiresReauthentication(): bool
+    {
+        return true;
+    }
+
+    public bool $can_be_translated = false;
 
     public const IP = 1;
 
@@ -139,7 +156,7 @@ class PluginMoresecurityWhitelist extends CommonDropdown
                 Session::addMessageAfterRedirect(
                     __('Invalid IP address or CIDR range.', 'moresecurity'),
                     false,
-                    ERROR
+                    ERROR,
                 );
                 return false;
             }
@@ -307,6 +324,7 @@ class PluginMoresecurityWhitelist extends CommonDropdown
 
     public static function install(Migration $migration): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $default_charset   = DBConnection::getDefaultCharset();

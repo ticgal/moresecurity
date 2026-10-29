@@ -29,8 +29,13 @@
  * -------------------------------------------------------------------------
  */
 
-use Glpi\Plugin\Hooks;
 use Glpi\Http\Firewall;
+use Glpi\Plugin\Hooks;
+use GlpiPlugin\Moresecurity\AttemptLog;
+use GlpiPlugin\Moresecurity\Config;
+use GlpiPlugin\Moresecurity\DashboardCards;
+use GlpiPlugin\Moresecurity\Profile;
+use GlpiPlugin\Moresecurity\Whitelist;
 
 use function Safe\define;
 
@@ -38,9 +43,9 @@ if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     include_once __DIR__ . '/vendor/autoload.php';
 }
 
-define('PLUGIN_MORESECURITY_VERSION', '2.3.1');
-define('PLUGIN_MORESECURITY_MIN_GLPI', '11.0.0');
-define('PLUGIN_MORESECURITY_MAX_GLPI', '11.0.99');
+define('PLUGIN_MORESECURITY_VERSION', '3.0.0-beta.1');
+define('PLUGIN_MORESECURITY_MIN_GLPI', '12.0.0');
+define('PLUGIN_MORESECURITY_MAX_GLPI', '12.1.0');
 
 function plugin_version_moresecurity()
 {
@@ -54,38 +59,37 @@ function plugin_version_moresecurity()
             'glpi' => [
                 'min' => PLUGIN_MORESECURITY_MIN_GLPI,
                 'max' => PLUGIN_MORESECURITY_MAX_GLPI,
-            ]
-        ]
+            ],
+        ],
     ];
 }
 
 function plugin_init_moresecurity()
 {
+    /** @var array $PLUGIN_HOOKS */
     global $PLUGIN_HOOKS;
-
-    $PLUGIN_HOOKS['csrf_compliant']['moresecurity'] = true;
 
     Firewall::addPluginStrategyForLegacyScripts(
         'moresecurity',
         '#^/front/login\.form\.php$#',
-        Firewall::STRATEGY_NO_CHECK
+        Firewall::STRATEGY_NO_CHECK,
     );
     Firewall::addPluginStrategyForLegacyScripts(
         'moresecurity',
         '#^/front/lostpassword\.form\.php$#',
-        Firewall::STRATEGY_NO_CHECK
+        Firewall::STRATEGY_NO_CHECK,
     );
 
     $plugin = new Plugin();
     if ($plugin->isActivated('moresecurity')) {
         $PLUGIN_HOOKS['config_page']['moresecurity'] = 'front/config.form.php';
         $PLUGIN_HOOKS[Hooks::ADD_CSS]['moresecurity'] = 'css/moresecurity.css';
-        Plugin::registerClass('PluginMoresecurityConfig', ['addtabon' => 'Config']);
-        Plugin::registerClass('PluginMoresecurityWhitelist', ['addtabon' => 'Config']);
-        Plugin::registerClass('PluginMoresecurityProfile', ['addtabon' => 'Profile']);
+        Plugin::registerClass(Config::class, ['addtabon' => 'Config']);
+        Plugin::registerClass(Whitelist::class, ['addtabon' => 'Config']);
+        Plugin::registerClass(Profile::class, ['addtabon' => 'Profile']);
 
-        $PLUGIN_HOOKS['menu_toadd']['moresecurity'] = ['admin' => 'PluginMoresecurityAttemptLog'];
-        $PLUGIN_HOOKS['dashboard_cards']['moresecurity'] = [PluginMoresecurityDashboardCards::class, 'dashboardCards'];
+        $PLUGIN_HOOKS['menu_toadd']['moresecurity'] = ['admin' => AttemptLog::class];
+        $PLUGIN_HOOKS['dashboard_cards']['moresecurity'] = [DashboardCards::class, 'dashboardCards'];
 
         $PLUGIN_HOOKS[Hooks::DISPLAY_LOGIN]['moresecurity'] = 'plugin_moresecurity_displayLogin';
         $PLUGIN_HOOKS[Hooks::POST_INIT]['moresecurity'] = 'plugin_moresecurity_enforce_login_gate';

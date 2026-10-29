@@ -29,16 +29,29 @@
  * -------------------------------------------------------------------------
  */
 
+namespace GlpiPlugin\Moresecurity;
+
+use CommonDBTM;
+use DBConnection;
+use DBmysql;
+use DisplayPreference;
+use Dropdown;
+use Glpi\Application\View\TemplateRenderer;
+use Glpi\DBAL\QueryExpression;
+use Glpi\DBAL\QueryFunction;
+use Glpi\DBAL\QuerySubQuery;
+use Glpi\Event;
+use Html;
+use Migration;
+use RuntimeException;
+use Throwable;
+use User;
+
 use function Safe\strtotime;
 
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
 }
-
-use Glpi\Application\View\TemplateRenderer;
-use Glpi\DBAL\QueryExpression;
-use Glpi\DBAL\QueryFunction;
-use Glpi\Event;
 
 /**
  * Registro de seguridad (solo anexar): una fila por cada intento de login o
@@ -47,15 +60,15 @@ use Glpi\Event;
  * dashboard; los contadores que deciden los bloqueos siguen en las tablas
  * login / loginip / lostpassword.
  */
-class PluginMoresecurityAttemptLog extends CommonDBTM
+class AttemptLog extends CommonDBTM
 {
-    public static $rightname = 'plugin_moresecurity_attempt';
+    public static string $rightname = 'plugin_moresecurity_attempt';
 
-    const EVENT_LOGIN       = 'login';
-    const EVENT_LOGIN_IP    = 'login_ip';
-    const EVENT_RESET_EMAIL = 'reset_email';
-    const EVENT_RESET_IP    = 'reset_ip';
-    const EVENT_LOGIN_GEO   = 'login_geo';
+    public const EVENT_LOGIN       = 'login';
+    public const EVENT_LOGIN_IP    = 'login_ip';
+    public const EVENT_RESET_EMAIL = 'reset_email';
+    public const EVENT_RESET_IP    = 'reset_ip';
+    public const EVENT_LOGIN_GEO   = 'login_geo';
 
     private const SUMMARY_PAGE_SIZE = 20;
 
@@ -88,6 +101,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      */
     public static function getSearchURL($full = true): string
     {
+        /** @var array $CFG_GLPI */
         global $CFG_GLPI;
 
         return ($full ? $CFG_GLPI['root_doc'] : '') . '/plugins/moresecurity/front/attempt.php';
@@ -95,6 +109,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
 
     public static function getSummaryURL(): string
     {
+        /** @var array $CFG_GLPI */
         global $CFG_GLPI;
 
         return $CFG_GLPI['root_doc'] . '/plugins/moresecurity/front/attemptsummary.php';
@@ -104,6 +119,15 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      * Registro de solo lectura: se escribe internamente y lo poda la acción
      * automática de retención; la UI no ofrece editar, borrar ni purgar.
      */
+    /**
+     * Mismo criterio que los registros del núcleo (Event, LogViewer): contiene
+     * logins, emails e IPs, así que se exige reautenticación.
+     */
+    protected static function itemTypeRequiresReauthentication(): bool
+    {
+        return true;
+    }
+
     public static function canCreate(): bool
     {
         return false;
@@ -156,6 +180,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      */
     public static function record(string $event, string $identifier, string $ip): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         if ($ip !== '' && self::ipOverCap($ip)) {
@@ -167,7 +192,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
                 'event'      => $event,
                 'identifier' => $identifier,
                 'ip'         => $ip,
-                'country'    => $ip !== '' ? PluginMoresecurityGeoip::classifyIp($ip) : null,
+                'country'    => $ip !== '' ? Geoip::classifyIp($ip) : null,
                 'users_id'   => self::resolveUserId($event, $identifier),
                 'date'       => date('Y-m-d H:i:s'),
             ]);
@@ -184,7 +209,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
         return self::countInBucket(
             $ip,
             ['date' => ['>', QueryFunction::dateSub(QueryFunction::now(), 1, 'HOUR')]],
-            self::MAX_ROWS_PER_IP_HOUR
+            self::MAX_ROWS_PER_IP_HOUR,
         ) >= self::MAX_ROWS_PER_IP_HOUR;
     }
 
@@ -195,6 +220,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      */
     private static function countInBucket(string $ip, array $criteria, int $limit): int
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         if (!str_contains($ip, ':')) {
@@ -205,7 +231,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
 
         // El texto de una IPv6 comienza por su primer grupo: se acota por ahí
         // y se confirma el /64 en PHP.
-        $bucket = PluginMoresecurityLimiter::bucketIp($ip);
+        $bucket = Limiter::bucketIp($ip);
         $count  = 0;
         $rows   = $DB->request([
             'SELECT' => 'ip',
@@ -214,7 +240,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
             'LIMIT'  => $limit * 20,
         ]);
         foreach ($rows as $row) {
-            if (PluginMoresecurityLimiter::bucketIp($row['ip']) === $bucket && ++$count >= $limit) {
+            if (Limiter::bucketIp($row['ip']) === $bucket && ++$count >= $limit) {
                 break;
             }
         }
@@ -251,6 +277,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      */
     public static function logGeoBlock(string $ip, string $identifier, string $country_code): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         // Como mucho una fila (y un evento) por IP y ventana: un origen
@@ -276,6 +303,10 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
             trigger_error('More Security: could not write the security log (' . $e->getMessage() . ')', E_USER_WARNING);
         }
 
+        // El mensaje acaba en una columna `text` del núcleo (se muestra como HTML
+        // enriquecido si es largo) y en un fichero de log: corto y sin marcado.
+        $shown = mb_substr(strtr($identifier, ['<' => '‹', '>' => '›']), 0, 64);
+
         Event::log(
             0,
             "system",
@@ -283,10 +314,10 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
             "login",
             sprintf(
                 __('Blocked login attempt for %1$s from IP %2$s (geoblocked: %3$s)', 'moresecurity'),
-                $identifier,
+                $shown,
                 $ip,
-                $country_code
-            )
+                $country_code,
+            ),
         );
     }
 
@@ -336,7 +367,10 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
             'table'    => $this->getTable(),
             'field'    => 'identifier',
             'name'     => __('Identifier'),
-            'datatype' => 'text',
+            // 'text' haría que el núcleo muestre como HTML enriquecido (con enlaces e
+            // imágenes) los valores de más de 250 caracteres: el identificador lo
+            // escribe un anónimo.
+            'datatype' => 'string',
         ];
 
         $tab[] = [
@@ -409,7 +443,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
         if ($field === 'country') {
             $value = is_array($values) ? ($values['country'] ?? null) : $values;
             $value = is_scalar($value) ? (string) $value : null;
-            return htmlescape(PluginMoresecurityGeoip::getCountryDisplayName($value ?: null));
+            return htmlescape(Geoip::getCountryDisplayName($value ?: null));
         }
 
         if ($field === 'identifier' && isset($options['searchopt']['id'])) {
@@ -469,17 +503,18 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      */
     private static function getCountryFilterChoices(): array
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $choices = [];
-        foreach (PluginMoresecurityGeoip::getNonCountrySentinels() as $sentinel) {
-            $choices[$sentinel] = PluginMoresecurityGeoip::getCountryDisplayName($sentinel);
+        foreach (Geoip::getNonCountrySentinels() as $sentinel) {
+            $choices[$sentinel] = Geoip::getCountryDisplayName($sentinel);
         }
 
         $codes = array_column(iterator_to_array($DB->request([
             'SELECT'  => ['country'],
             'FROM'    => self::getTable(),
-            'WHERE'   => ['country' => ['NOT IN', PluginMoresecurityGeoip::getNonCountrySentinels()]],
+            'WHERE'   => ['country' => ['NOT IN', Geoip::getNonCountrySentinels()]],
             'GROUPBY' => ['country'],
         ])), 'country');
 
@@ -488,7 +523,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
             if ($code === null) {
                 continue;
             }
-            $countries[$code] = PluginMoresecurityGeoip::getCountryDisplayName($code);
+            $countries[$code] = Geoip::getCountryDisplayName($code);
         }
         asort($countries);
 
@@ -513,17 +548,20 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      */
     public static function showSummary(): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $table = self::getTable();
         $start = max(0, (int) ($_GET['start'] ?? 0));
 
-        $res   = $DB->doQuery(
-            "SELECT COUNT(*) AS cpt FROM (
-				SELECT 1 FROM " . DBmysql::quoteName($table) . " GROUP BY `event`, `identifier`, `ip`
-			) AS grouped"
-        );
-        $total = (int) ($res ? ($DB->fetchAssoc($res)['cpt'] ?? 0) : 0);
+        $total = (int) ($DB->request([
+            'COUNT' => 'cpt',
+            'FROM'  => new QuerySubQuery([
+                'SELECT'  => ['event', 'identifier', 'ip'],
+                'FROM'    => $table,
+                'GROUPBY' => ['event', 'identifier', 'ip'],
+            ], 'grouped'),
+        ])->current()['cpt'] ?? 0);
 
         $result = $DB->request([
             'SELECT'  => [
@@ -559,7 +597,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
                 'email'     => !$is_login ? $row['identifier'] : '',
                 'user'      => $user,
                 'ip'        => $row['ip'],
-                'country'   => PluginMoresecurityGeoip::getCountryDisplayName($row['country'] ?: null),
+                'country'   => Geoip::getCountryDisplayName($row['country'] ?: null),
                 'try_count' => (int) $row['try_count'],
                 'last_try'  => Html::convDateTime($row['last_try']),
             ];
@@ -580,6 +618,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      */
     public static function getTopAttackingIps(int $hours, int $limit = 10): array
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $since = date('Y-m-d H:i:s', strtotime("-{$hours} hours"));
@@ -608,6 +647,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      */
     public static function getMostTargetedAccounts(int $hours, int $limit = 10): array
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $since = date('Y-m-d H:i:s', strtotime("-{$hours} hours"));
@@ -635,6 +675,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      */
     public static function getTopCountriesByType(int $hours, int $limit = 10): array
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $since = date('Y-m-d H:i:s', strtotime("-{$hours} hours"));
@@ -677,22 +718,30 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      */
     public static function purge(int $retention_days, int $batch = 5000, int $max_batches = 100): int
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         if ($retention_days <= 0) {
             return 0;
         }
 
+        $cutoff  = ['date' => ['<', QueryFunction::dateSub(QueryFunction::now(), $retention_days, 'DAY')]];
         $deleted = 0;
         for ($i = 0; $i < $max_batches; $i++) {
-            $DB->doQuery(
-                "DELETE FROM " . DBmysql::quoteName(self::getTable()) . "
-				 WHERE `date` < (NOW() - INTERVAL " . (int) $retention_days . " DAY)
-				 LIMIT " . (int) $batch
-            );
-            $count = (int) $DB->affectedRows();
-            $deleted += $count;
-            if ($count < $batch) {
+            // DBmysql::delete() no admite LIMIT: se eligen los ids del lote y se
+            // borran por clave, igual de acotado y sin SQL en bruto.
+            $ids = array_column(iterator_to_array($DB->request([
+                'SELECT' => 'id',
+                'FROM'   => self::getTable(),
+                'WHERE'  => $cutoff,
+                'LIMIT'  => $batch,
+            ]), false), 'id');
+            if ($ids === []) {
+                break;
+            }
+            $DB->delete(self::getTable(), ['id' => $ids]);
+            $deleted += count($ids);
+            if (count($ids) < $batch) {
                 break;
             }
         }
@@ -702,6 +751,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
 
     public static function install(Migration $migration): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $default_charset   = DBConnection::getDefaultCharset();
@@ -740,6 +790,7 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
      */
     private static function installDefaultDisplayPreferences(): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $existing_ids = array_column(iterator_to_array($DB->request([
@@ -764,10 +815,10 @@ class PluginMoresecurityAttemptLog extends CommonDBTM
 
     public static function uninstall(Migration $migration): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $migration->dropTable(self::getTable());
-
         $DB->delete(DisplayPreference::getTable(), ['itemtype' => self::class]);
     }
 }

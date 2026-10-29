@@ -29,15 +29,22 @@
  * -------------------------------------------------------------------------
  */
 
+namespace GlpiPlugin\Moresecurity;
+
+use CommonDBTM;
+use DBConnection;
+use DBmysql;
 use Glpi\DBAL\QueryFunction;
+use Migration;
+use RuntimeException;
 
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access directly to this file");
 }
 
-class PluginMoresecurityLogin extends CommonDBTM
+class Login extends CommonDBTM
 {
-    const TIME_WINDOW = PluginMoresecurityLimiter::TIME_WINDOW;
+    public const TIME_WINDOW = Limiter::TIME_WINDOW;
 
     /**
      * Reserva atómica de un intento de login ANTES de autenticar (MS-06).
@@ -51,7 +58,7 @@ class PluginMoresecurityLogin extends CommonDBTM
      */
     public static function reserve(string $login, string $ip): ?string
     {
-        $config            = PluginMoresecurityConfig::getInstance();
+        $config            = Config::getInstance();
         $account_threshold = self::getAccountThreshold($config);
         $ip_max            = (int) $config->fields['ip_max_attempts'];
         $ip_threshold      = (int) $config->fields['ip_threshold'];
@@ -64,12 +71,12 @@ class PluginMoresecurityLogin extends CommonDBTM
 
         $keys = ['login:' . mb_strtolower($login)];
         if ($ip !== '') {
-            $keys[] = 'ip:' . PluginMoresecurityLimiter::bucketIp($ip);
+            $keys[] = 'ip:' . Limiter::bucketIp($ip);
         }
 
-        [$locked, $result] = PluginMoresecurityLimiter::withLocks(
+        [$locked, $result] = Limiter::withLocks(
             $keys,
-            fn() => self::reserveLocked($login, $ip, $config, $account_threshold, $track_account, $track_ip)
+            fn() => self::reserveLocked($login, $ip, $config, $account_threshold, $track_account, $track_ip),
         );
 
         return $locked ? $result : 'busy';
@@ -78,18 +85,18 @@ class PluginMoresecurityLogin extends CommonDBTM
     private static function reserveLocked(
         string $login,
         string $ip,
-        PluginMoresecurityConfig $config,
+        Config $config,
         int $account_threshold,
         bool $track_account,
         bool $track_ip
     ): ?string {
         $ip_max = (int) $config->fields['ip_max_attempts'];
 
-        if ($ip !== '' && $ip_max > 0 && PluginMoresecurityLoginip::isBlocked($ip)) {
+        if ($ip !== '' && $ip_max > 0 && Loginip::isBlocked($ip)) {
             return 'ip';
         }
         if ($track_account) {
-            if (PluginMoresecurityLimiter::isBlockedNow(self::getTable(), ['login' => $login])) {
+            if (Limiter::isBlockedNow(self::getTable(), ['login' => $login])) {
                 return 'account';
             }
             // Umbral alcanzado sin "blocked" (umbral subido/activado con
@@ -102,13 +109,13 @@ class PluginMoresecurityLogin extends CommonDBTM
 
         $overflow = false;
         if ($track_ip) {
-            $overflow = PluginMoresecurityLoginip::isOverflow($login, $ip);
-            PluginMoresecurityLoginip::addTry(
-                $overflow ? PluginMoresecurityLimiter::ANON_BUCKET : $login,
-                $ip
+            $overflow = Loginip::isOverflow($login, $ip);
+            Loginip::addTry(
+                $overflow ? Limiter::ANON_BUCKET : $login,
+                $ip,
             );
             if ($ip_max > 0) {
-                PluginMoresecurityLoginip::applyIpBlock($ip);
+                Loginip::applyIpBlock($ip);
             }
         }
 
@@ -125,8 +132,9 @@ class PluginMoresecurityLogin extends CommonDBTM
      * Si el contador alcanzó el umbral pero no hay bloqueo vigente ni
      * caducado (blocked IS NULL), fija ahora el bloqueo y devuelve true.
      */
-    private static function reconcile(string $login, int $threshold, PluginMoresecurityConfig $config): bool
+    private static function reconcile(string $login, int $threshold, Config $config): bool
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $row = $DB->request([
@@ -138,10 +146,10 @@ class PluginMoresecurityLogin extends CommonDBTM
             return false;
         }
 
-        $delay = PluginMoresecurityLimiter::backoffDelay(
+        $delay = Limiter::backoffDelay(
             (int) $config->fields['time_blocked'],
             (int) $row['login_try'] - $threshold,
-            (int) $config->fields['max_time_blocked']
+            (int) $config->fields['max_time_blocked'],
         );
         self::setBlocked($login, $delay);
 
@@ -150,10 +158,11 @@ class PluginMoresecurityLogin extends CommonDBTM
 
     private static function setBlocked(string $login, int $delay): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $DB->update(self::getTable(), [
-            'blocked' => PluginMoresecurityLimiter::fromNow($delay),
+            'blocked' => Limiter::fromNow($delay),
         ], ['login' => $login]);
     }
 
@@ -163,7 +172,7 @@ class PluginMoresecurityLogin extends CommonDBTM
      * un atacante desde una única IP podría bloquear la cuenta para
      * TODAS las IPs antes de que su propia IP quedara bloqueada.
      */
-    private static function getAccountThreshold(PluginMoresecurityConfig $config): int
+    private static function getAccountThreshold(Config $config): int
     {
         $account_threshold = (int) $config->fields['number_attempts'];
         if (
@@ -183,8 +192,9 @@ class PluginMoresecurityLogin extends CommonDBTM
      * backoff; el de IP distintas aplica una duración acotada y recuperable
      * (MS-03), nunca una fecha centinela.
      */
-    private static function addTry(string $login, int $account_threshold, PluginMoresecurityConfig $config): void
+    private static function addTry(string $login, int $account_threshold, Config $config): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $table   = self::getTable();
@@ -199,7 +209,7 @@ class PluginMoresecurityLogin extends CommonDBTM
 			 ON DUPLICATE KEY UPDATE
 				`login_try` = IF($stale, 1, `login_try` + 1),
 				`blocked`   = IF($stale, NULL, `blocked`),
-				`last_try`  = NOW()"
+				`last_try`  = NOW()",
         ) or throw new RuntimeException('More Security: could not record the attempt');
 
         $row = $DB->request(['SELECT' => 'login_try', 'FROM' => $table, 'WHERE' => ['login' => $login]])->current();
@@ -210,21 +220,21 @@ class PluginMoresecurityLogin extends CommonDBTM
 
         $delay = 0;
         if ($account_threshold > 0 && $try >= $account_threshold) {
-            $delay = PluginMoresecurityLimiter::backoffDelay(
+            $delay = Limiter::backoffDelay(
                 (int) $config->fields['time_blocked'],
                 $try - $account_threshold,
-                (int) $config->fields['max_time_blocked']
+                (int) $config->fields['max_time_blocked'],
             );
         }
 
         $ip_threshold = (int) $config->fields['ip_threshold'];
-        if ($ip_threshold > 0 && PluginMoresecurityLoginip::countDistinctIpsForLogin($login) >= $ip_threshold) {
+        if ($ip_threshold > 0 && Loginip::countDistinctIpsForLogin($login) >= $ip_threshold) {
             $max_delay = (int) $config->fields['max_time_blocked'];
             $delay = max(
                 $delay,
                 $max_delay > 0
-                    ? min($max_delay, PluginMoresecurityLimiter::HARD_CEILING)
-                    : PluginMoresecurityLimiter::DISTRIBUTED_DEFAULT
+                    ? min($max_delay, Limiter::HARD_CEILING)
+                    : Limiter::DISTRIBUTED_DEFAULT,
             );
         }
 
@@ -239,19 +249,20 @@ class PluginMoresecurityLogin extends CommonDBTM
      */
     public static function clearLoginTry($login)
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $DB->update(self::getTable(), [
             'login_try' => 0,
             'last_try'  => null,
-            'blocked'   => null
+            'blocked'   => null,
         ], [
-            'login' => $login
+            'login' => $login,
         ]);
 
-        $ip = PluginMoresecurityLimiter::getClientIp();
+        $ip = Limiter::getClientIp();
         if ($ip) {
-            PluginMoresecurityLoginip::clearIpTryForLogin($login, $ip);
+            Loginip::clearIpTryForLogin($login, $ip);
         }
     }
 
@@ -261,6 +272,7 @@ class PluginMoresecurityLogin extends CommonDBTM
      */
     public static function unblock(string $login): bool
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $DB->update(self::getTable(), [
@@ -268,7 +280,7 @@ class PluginMoresecurityLogin extends CommonDBTM
             'last_try'  => null,
             'blocked'   => null,
         ], ['login' => $login]);
-        PluginMoresecurityLoginip::clearTriesForLogin($login);
+        Loginip::clearTriesForLogin($login);
 
         return true;
     }
@@ -278,12 +290,13 @@ class PluginMoresecurityLogin extends CommonDBTM
      */
     public static function getBlocked(int $limit = 100): array
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         return iterator_to_array($DB->request([
-            'SELECT' => ['login', 'login_try', 'blocked', 'last_try', PluginMoresecurityLimiter::secondsUntil('blocked')],
+            'SELECT' => ['login', 'login_try', 'blocked', 'last_try', Limiter::secondsUntil('blocked')],
             'FROM'   => self::getTable(),
-            'WHERE'  => PluginMoresecurityLimiter::activeBlockCriteria(),
+            'WHERE'  => Limiter::activeBlockCriteria(),
             'ORDER'  => 'blocked DESC',
             'LIMIT'  => $limit,
         ]), false);
@@ -294,7 +307,7 @@ class PluginMoresecurityLogin extends CommonDBTM
      */
     public static function purge(int $retention_days, int $batch = 1000, int $max_batches = 50): int
     {
-        return PluginMoresecurityRetention::purgeTable(self::getTable(), $retention_days, $batch, $max_batches);
+        return Retention::purgeTable(self::getTable(), $retention_days, $batch, $max_batches);
     }
 
     /**
@@ -305,6 +318,7 @@ class PluginMoresecurityLogin extends CommonDBTM
      */
     public static function install(Migration $migration): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
         $default_charset = DBConnection::getDefaultCharset();
@@ -345,7 +359,7 @@ class PluginMoresecurityLogin extends CommonDBTM
             // 2.2.2: índice para la retención y fin de los bloqueos a 2037
             $migration->addKey($table, 'last_try');
             $migration->migrationOneTable($table);
-            PluginMoresecurityLimiter::capLegacyBlocks($table);
+            Limiter::capLegacyBlocks($table);
         }
     }
 
@@ -356,19 +370,23 @@ class PluginMoresecurityLogin extends CommonDBTM
      */
     private static function mergeDuplicateLogins(string $table): void
     {
+        /** @var \DBmysql $DB */
         global $DB;
 
-        $result = $DB->doQuery(
-            "SELECT `login` FROM " . DBmysql::quoteName($table) . "
-			 WHERE `login` IS NOT NULL
-			 GROUP BY `login`
-			 HAVING COUNT(*) > 1"
-        );
-        if (!$result) {
-            return;
-        }
+        // Se agrupa con el builder y se filtran en PHP los logins repetidos (la
+        // tabla es pequeña y esto solo corre al migrar).
+        $groups = iterator_to_array($DB->request([
+            'SELECT'  => ['login', QueryFunction::count('id', false, 'n')],
+            'FROM'    => $table,
+            'WHERE'   => ['NOT' => ['login' => null]],
+            'GROUPBY' => 'login',
+        ]), false);
 
-        while ($dup = $DB->fetchAssoc($result)) {
+        foreach ($groups as $dup) {
+            if ((int) $dup['n'] < 2) {
+                continue;
+            }
+
             $rows = iterator_to_array($DB->request([
                 'FROM'  => $table,
                 'WHERE' => ['login' => $dup['login']],

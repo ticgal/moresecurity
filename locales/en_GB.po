@@ -47,49 +47,49 @@ msgstr "Please enter a valid email address."
 msgid "Too many password change attempts. Please try again later."
 msgstr "Too many password change attempts. Please try again later."
 
-#: inc/attemptlog.class.php inc/profile.class.php
+#: src/AttemptLog.php src/Profile.php
 msgid "Security log"
 msgstr "Security log"
 
-#: inc/attemptlog.class.php
+#: src/AttemptLog.php
 msgid "Login"
 msgstr "Login"
 
-#: inc/attemptlog.class.php
+#: src/AttemptLog.php
 msgid "Login IP"
 msgstr "Login IP"
 
-#: inc/attemptlog.class.php
+#: src/AttemptLog.php
 msgid "Password reset"
 msgstr "Password reset"
 
-#: inc/attemptlog.class.php
+#: src/AttemptLog.php
 msgid "Password reset IP"
 msgstr "Password reset IP"
 
-#: inc/attemptlog.class.php
+#: src/AttemptLog.php
 msgid "Login Geoblocked"
 msgstr "Login Geoblocked"
 
-#: inc/attemptlog.class.php
+#: src/AttemptLog.php
 msgid "Blocked login attempt for %1$s from IP %2$s (geoblocked: %3$s)"
 msgstr "Blocked login attempt for %1$s from IP %2$s (geoblocked: %3$s)"
 
-#: inc/attemptlog.class.php templates/attempt_summary.html.twig
+#: src/AttemptLog.php templates/attempt_summary.html.twig
 msgid "Type"
 msgstr "Type"
 
-#: inc/attemptlog.class.php templates/attempt_summary.html.twig
+#: src/AttemptLog.php templates/attempt_summary.html.twig
 msgid "Country"
 msgstr "Country"
 
-#: inc/attemptlog.class.php templates/attempt_tabs.html.twig
+#: src/AttemptLog.php templates/attempt_tabs.html.twig
 msgid "Attempt log"
 msgid_plural "Attempt logs"
 msgstr[0] "Attempt log"
 msgstr[1] "Attempt logs"
 
-#: inc/config.class.php
+#: src/Config.php
 msgid ""
 "The account lockout threshold must be greater than the IP lockout threshold."
 " It has been adjusted automatically."
@@ -97,70 +97,70 @@ msgstr ""
 "The account lockout threshold must be greater than the IP lockout threshold."
 " It has been adjusted automatically."
 
-#: inc/config.class.php
+#: src/Config.php
 #, python-format
 msgid "Ignored invalid IP entry: %s"
 msgstr "Ignored invalid IP entry: %s"
 
-#: inc/dashboardgrid.class.php
+#: src/DashboardGrid.php
 msgid "More Security"
 msgstr "More Security"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "Private"
 msgstr "Private"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "Reserved"
 msgstr "Reserved"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "Unknown"
 msgstr "Unknown"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "private/local address"
 msgstr "private/local address"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "database unavailable"
 msgstr "database unavailable"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid ""
 "GeoIP lookup failed for IP %1$s (%2$s) — login allowed through (fail-open)"
 msgstr ""
 "GeoIP lookup failed for IP %1$s (%2$s) — login allowed through (fail-open)"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "Download the monthly DB-IP Lite country database"
 msgstr "Download the monthly DB-IP Lite country database"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "GeoIP database updated successfully."
 msgstr "GeoIP database updated successfully."
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "GeoIP database update failed."
 msgstr "GeoIP database update failed."
 
-#: inc/retention.class.php
+#: src/Retention.php
 msgid "Purge security logs based on retention policy"
 msgstr "Purge security logs based on retention policy"
 
-#: inc/retention.class.php
+#: src/Retention.php
 msgid "Retention period (days)"
 msgstr "Retention period (days)"
 
-#: inc/retention.class.php
+#: src/Retention.php
 msgid "Purge old login and password reset attempt records"
 msgstr "Purge old login and password reset attempt records"
 
-#: inc/whitelist.class.php
+#: src/Whitelist.php
 msgid "Invalid IP address or CIDR range."
 msgstr "Invalid IP address or CIDR range."
 
-#: inc/whitelist.class.php
+#: src/Whitelist.php
 msgid "Whitelist"
 msgid_plural "Whitelists"
 msgstr[0] "Whitelist"

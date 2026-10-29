@@ -29,12 +29,13 @@
  * -------------------------------------------------------------------------
  */
 
-if (!defined('GLPI_ROOT')) {
-    die("Sorry. You can't access directly to this file");
-}
+namespace GlpiPlugin\Moresecurity;
 
-use Glpi\Event;
+use CronTask;
 use GeoIp2\Database\Reader;
+use Glpi\Event;
+use Glpi\Toolbox\HttpClient;
+use Migration;
 use Safe\Exceptions\SafeExceptionInterface;
 
 use function Safe\chmod;
@@ -50,13 +51,17 @@ use function Safe\rename;
 use function Safe\tempnam;
 use function Safe\unlink;
 
+if (!defined('GLPI_ROOT')) {
+    die("Sorry. You can't access directly to this file");
+}
+
 /**
  * Resolves client IPs to ISO-3166-1 alpha-2 country codes using a DB-IP Lite
  * `.mmdb` database, and enforces the configured allow/deny country policy on
  * logins. Every failure mode (missing/corrupt database, unresolvable IP)
  * fails open — this plugin never locks everyone out on a data problem.
  */
-class PluginMoresecurityGeoip
+class Geoip
 {
     /**
      * In-request cache so a single request never opens the mmdb reader twice.
@@ -164,19 +169,27 @@ class PluginMoresecurityGeoip
         $max_download = 40 * 1024 * 1024;
         $max_inflated = 50 * 1024 * 1024;
 
-        $content = Toolbox::callCurl(
-            self::getDownloadUrl(),
-            [
-                CURLOPT_MAXFILESIZE      => $max_download, // when Content-Length is known
-                CURLOPT_NOPROGRESS       => false,
-                // Non-zero return aborts the transfer (covers chunked responses).
-                CURLOPT_PROGRESSFUNCTION => static fn($ch, $dl_total, $dl_now) => $dl_now > $max_download ? 1 : 0,
-            ],
-            $err,
-            $curl_err,
-            true
-        );
-        if ($content === false || $content === '' || strlen($content) > $max_download) {
+        try {
+            $response = (new HttpClient())->request(
+                'GET',
+                self::getDownloadUrl(),
+                [
+                    'timeout'     => 60,
+                    'max_duration' => 300,
+                    // Throwing from here aborts the transfer (covers chunked
+                    // responses that announce no Content-Length).
+                    'on_progress' => static function (int $dl_now, int $dl_size) use ($max_download): void {
+                        if ($dl_now > $max_download || $dl_size > $max_download) {
+                            throw new \RuntimeException('DB-IP download exceeds the size cap');
+                        }
+                    },
+                ],
+            );
+            $content = $response->getContent();
+        } catch (\Throwable $e) {
+            return false;
+        }
+        if ($content === '' || strlen($content) > $max_download) {
             return false;
         }
         file_put_contents($gz_tmp, $content);
@@ -391,7 +404,7 @@ class PluginMoresecurityGeoip
      */
     public static function isAllowed(string $ip, string $identifier): bool
     {
-        $config = PluginMoresecurityConfig::getInstance();
+        $config = Config::getInstance();
         $mode = $config->fields['geoblock_mode'] ?? self::MODE_DISABLED;
 
         if ($mode === self::MODE_DISABLED) {
@@ -407,15 +420,15 @@ class PluginMoresecurityGeoip
         $countries = array_filter(
             array_map(
                 'trim',
-                explode(',', (string) ($config->fields['geoblock_countries'] ?? ''))
-            )
+                explode(',', (string) ($config->fields['geoblock_countries'] ?? '')),
+            ),
         );
 
         $in_list = in_array($country, $countries, true);
         $allowed = ($mode === self::MODE_ALLOW) ? $in_list : !$in_list;
 
         if (!$allowed) {
-            PluginMoresecurityAttemptLog::logGeoBlock($ip, $identifier, $country);
+            AttemptLog::logGeoBlock($ip, $identifier, $country);
         }
 
         return $allowed;
@@ -432,6 +445,7 @@ class PluginMoresecurityGeoip
     {
         // Como mucho un aviso por hora: sin esto cada login escribiría una
         // fila en `glpi_events` (SEV-02).
+        /** @var \Psr\SimpleCache\CacheInterface $GLPI_CACHE */
         global $GLPI_CACHE;
         $cache_key = 'moresecurity_geoip_lookup_failed';
         if ($GLPI_CACHE->has($cache_key)) {
@@ -451,8 +465,8 @@ class PluginMoresecurityGeoip
             sprintf(
                 __('GeoIP lookup failed for IP %1$s (%2$s) — login allowed through (fail-open)', 'moresecurity'),
                 $ip,
-                $reason
-            )
+                $reason,
+            ),
         );
     }
 
@@ -480,7 +494,7 @@ class PluginMoresecurityGeoip
     {
         // Sin geobloqueo activo no se hace ninguna petición saliente, salvo
         // que aún no haya base de datos (así existe al activar el modo).
-        $mode = PluginMoresecurityConfig::getInstance()->fields['geoblock_mode'] ?? self::MODE_DISABLED;
+        $mode = Config::getInstance()->fields['geoblock_mode'] ?? self::MODE_DISABLED;
         if ($mode === self::MODE_DISABLED && is_file(self::getDatabasePath())) {
             return 0;
         }
@@ -509,7 +523,7 @@ class PluginMoresecurityGeoip
                 'mode'    => CronTask::MODE_EXTERNAL,
                 'hourmin' => 3,
                 'hourmax' => 4,
-            ]
+            ],
         );
     }
 
