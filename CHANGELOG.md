@@ -1,9 +1,7 @@
 # Changelog
 <!-- changelog-format: 2 -->
 
-## [Unreleased]
-*Working version: 3.0.0-beta.1*
-
+## [3.0.0]
 ### Features
 - GLPI 12 support (requires GLPI 12.0.0 or later, below 12.1.0).
 - The configuration tab now asks for re-authentication, like the core configuration.
