@@ -1,4 +1,12 @@
 # Changelog
+<!-- changelog-format: 2 -->
+
+## [Unreleased]
+*Working version: 2.3.2-beta.1*
+### Bugs
+- CalDAV logins on any path that starts with `/caldav.php` now count towards the attempt limits and the geoblocking, not only on the canonical address
+- Password initialization requests are limited whenever the initialization email is enabled, even if the forgotten-password email is disabled
+- Password reset requests whose security token only arrives in the request header are now refused instead of skipping the limits
 
 ## 2.3.1 - 21/10/2026
 ### Bugfix
