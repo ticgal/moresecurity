@@ -2,7 +2,7 @@
 <!-- changelog-format: 2 -->
 
 ## [2.3.2] - 2026/11/09
-*Working version: 2.3.2-beta.1*
+
 ### Bugs
 - CalDAV logins on any path that starts with `/caldav.php` now count towards the attempt limits and the geoblocking, not only on the canonical address
 - Password initialization requests are limited whenever the initialization email is enabled, even if the forgotten-password email is disabled
