@@ -95,9 +95,11 @@ data: adjust both actions to your retention policy.
 ### Scope and limits
 - **Channels covered.** The protections (attempt limits, IP blocking, whitelist, geoblocking) apply to the GLPI
   login and password-reset forms and to the other channels that verify a password: CalDAV (`/caldav.php`, HTTP
-  Basic), the legacy REST API (`apirest.php/initSession` with credentials, and `lostPassword`) and the OAuth
-  *password* grant of the High-Level API (`api.php/token`). They are only checked while the API is enabled, since
-  otherwise the core never verifies a password there. A successful login releases the account counter.
+  Basic), the legacy REST API (`apirest.php` and `api.php/v1`: `initSession` with credentials, and `lostPassword`)
+  and the OAuth *password* grant of the High-Level API (`api.php/token`). The legacy REST API is only checked while
+  it is enabled, since otherwise the core never verifies a password there; the OAuth password grant is always
+  checked, because the core serves it even with the APIs disabled. An attempt is released only when GLPI actually
+  authenticated that account, never because of the HTTP status of the response.
 - **Channels not covered.** The "remember me" cookie and single sign-on (CAS, x509, remote user) do not verify a GLPI
   password, so there is nothing to count. Authentication with an API *user token* is not covered either: it is a
   random secret, not a password.

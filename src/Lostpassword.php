@@ -41,7 +41,8 @@ use Migration;
 use RuntimeException;
 
 if (!defined('GLPI_ROOT')) {
-    die("Sorry. You can't access directly to this file");
+    echo "Sorry. You can't access directly to this file";
+    return;
 }
 
 class Lostpassword extends CommonDBTM

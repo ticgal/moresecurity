@@ -40,7 +40,8 @@ use function Safe\inet_ntop;
 use function Safe\inet_pton;
 
 if (!defined('GLPI_ROOT')) {
-    die("Sorry. You can't access directly to this file");
+    echo "Sorry. You can't access directly to this file";
+    return;
 }
 
 /**

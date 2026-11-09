@@ -37,7 +37,8 @@ use Glpi\DBAL\QueryFunction;
 use Migration;
 
 if (!defined('GLPI_ROOT')) {
-    die("Sorry. You can't access directly to this file");
+    echo "Sorry. You can't access directly to this file";
+    return;
 }
 
 /**

@@ -45,7 +45,7 @@ if (
         ['itemtype' => 'User', 'event' => 'passwordforget', 'is_active' => 1],
     )
 ) {
-    exit();
+    return;
 }
 
 $user = new User();
@@ -65,5 +65,3 @@ if (isset($_REQUEST['password_forget_token'])) {
         Lostpassword::showPasswordForgetRequestForm();
     }
 }
-
-exit();

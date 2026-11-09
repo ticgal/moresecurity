@@ -1,6 +1,14 @@
 # Changelog
 <!-- changelog-format: 2 -->
 
+## [3.0.1]
+### Bugs
+- Security review 05/11/2026: a CalDAV or API login attempt is now released only when GLPI actually authenticated that account. A request to an unrelated path containing `caldav.php`, or to a public API page carrying a username, can no longer reset an account's attempt counter or its IP budget.
+- CalDAV, REST and High-Level API requests are recognised by the route GLPI uses, so installations in a subdirectory and URLs starting with `/index.php/` are covered.
+- The legacy REST API is now also limited when called through `/api.php/v1/`, without a `Content-Type` header, with multipart credentials (`uploadManifest`), or with a login sent as a number or as `true`. Password recovery through `/api.php/v1/lostPassword` uses the per-email budget.
+- The OAuth password grant of the High-Level API (`api.php/token`) is now limited even when the legacy REST API is disabled, which is the default, and also when credentials are sent as multipart.
+- CalDAV and API logins whose name cannot be counted (control characters, excessive length) are refused, as on the login form.
+
 ## [3.0.0]
 ### Features
 - GLPI 12 support (requires GLPI 12.0.0 or later, below 12.1.0).

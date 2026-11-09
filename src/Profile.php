@@ -42,7 +42,8 @@ use function Safe\ob_get_clean;
 use function Safe\ob_start;
 
 if (!defined('GLPI_ROOT')) {
-    die("Sorry. You can't access directly to this file");
+    echo "Sorry. You can't access directly to this file";
+    return;
 }
 
 class Profile extends CommonGLPI
