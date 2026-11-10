@@ -31,6 +31,7 @@
 
 use Safe\Exceptions\SafeExceptionInterface;
 
+use function Safe\base64_decode;
 use function Safe\glob;
 use function Safe\json_encode;
 use function Safe\parse_url;
@@ -264,8 +265,13 @@ function plugin_moresecurity_enforce_caldav_gate(): void
     if ($user === null) {
         $header = (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
         if (stripos($header, 'Basic ') === 0) {
-            $decoded = base64_decode(substr($header, 6), true);
-            $user    = is_string($decoded) && str_contains($decoded, ':') ? explode(':', $decoded, 2)[0] : null;
+            try {
+                $decoded = base64_decode(substr($header, 6), true);
+            } catch (SafeExceptionInterface $e) {
+                // Cabecera mal formada: sin usuario, igual que antes con false.
+                $decoded = null;
+            }
+            $user = is_string($decoded) && str_contains($decoded, ':') ? explode(':', $decoded, 2)[0] : null;
         }
     }
     $login = PluginMoresecurityLimiter::cleanIdentity($user);
@@ -322,8 +328,15 @@ function plugin_moresecurity_enforce_login_gate(): void
         $path = '';
     }
 
-    // CalDAV verifica contraseñas con HTTP Basic en cualquier método.
-    if (preg_match('#/caldav\.php(/|$)#', $path)) {
+    // CalDAV verifica contraseñas con HTTP Basic en cualquier método. El
+    // núcleo enruta al servidor CalDAV TODA ruta que empiece por /caldav.php
+    // (sin exigir '/' ni fin de ruta después), así que se usa el mismo
+    // prefijo: /caldav.phpX o /caldav.php.ics no pueden saltarse el gate.
+    $root_doc = (string) ($CFG_GLPI['root_doc'] ?? '');
+    $relative = ($root_doc !== '' && str_starts_with($path, $root_doc))
+        ? substr($path, strlen($root_doc))
+        : $path;
+    if (str_starts_with($relative, '/caldav.php')) {
         plugin_moresecurity_enforce_caldav_gate();
     }
 
@@ -358,17 +371,30 @@ function plugin_moresecurity_enforce_login_gate(): void
         }
     }
 
+    // Cada ruta se limita mientras el núcleo enviaría su correo: initpassword.php
+    // depende de la notificación 'passwordinit'; las de recuperación, de
+    // 'passwordforget'.
+    $recovery_event = null;
+    if (preg_match('#/front/initpassword\.php(/|$)#', $path)) {
+        $recovery_event = 'passwordinit';
+    } elseif (preg_match('#/(front/lostpassword\.php|plugins/moresecurity/front/lostpassword\.form\.php)(/|$)#', $path)) {
+        $recovery_event = 'passwordforget';
+    }
+
     if (
-        isset($_POST['email'])
+        $recovery_event !== null
+        && isset($_POST['email'])
         && !isset($_REQUEST['password_forget_token'])
-        && preg_match('#/(front/lostpassword\.php|front/initpassword\.php|plugins/moresecurity/front/lostpassword\.form\.php)(/|$)#', $path)
         && $CFG_GLPI['notifications_mailing']
-        && countElementsInTable('glpi_notifications', ['itemtype' => 'User', 'event' => 'passwordforget', 'is_active' => 1])
+        && countElementsInTable('glpi_notifications', ['itemtype' => 'User', 'event' => $recovery_event, 'is_active' => 1])
     ) {
+        // Sin token válido en el cuerpo no se devuelve el control: el núcleo
+        // aceptaría el token de cabecera (XHR, sin consumirlo) y enviaría el
+        // correo sin pasar por los presupuestos por email e IP.
         // El token no se consume: si la solicitud se admite, continúa hacia
         // el controlador, cuyo control CSRF nativo lo consumirá.
         if (!Session::validateCSRF($_POST, true)) {
-            return;
+            plugin_moresecurity_deny(403, [__('Invalid or expired security token. Please reload the page and try again.', 'moresecurity')]);
         }
         try {
             plugin_moresecurity_enforce_recovery();
