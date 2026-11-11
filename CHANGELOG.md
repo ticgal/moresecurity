@@ -25,6 +25,13 @@
 - The Active blocks list is only shown to users who can read the Security log or manage the configuration.
 - The Security log pages now ask for re-authentication.
 
+## [2.3.2] - 2026/11/09
+
+### Bugs
+- CalDAV logins on any path that starts with `/caldav.php` now count towards the attempt limits and the geoblocking, not only on the canonical address
+- Password initialization requests are limited whenever the initialization email is enabled, even if the forgotten-password email is disabled
+- Password reset requests whose security token only arrives in the request header are now refused instead of skipping the limits
+
 ## [2.3.1] - 2026-10-21
 ### Bugs
 - Security review 21/10/2026: CalDAV Basic logins and `/front/initpassword.php` are now covered by the attempt/IP budgets and geoblocking
