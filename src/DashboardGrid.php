@@ -29,11 +29,15 @@
  * -------------------------------------------------------------------------
  */
 
-if (!defined('GLPI_ROOT')) {
-    die("Sorry. You can't access directly to this file");
-}
+namespace GlpiPlugin\Moresecurity;
 
 use Glpi\Dashboard\Dashboard;
+use Migration;
+
+if (!defined('GLPI_ROOT')) {
+    echo "Sorry. You can't access directly to this file";
+    return;
+}
 
 /**
  * Default dashboard provider for More Security plugin.
@@ -48,7 +52,7 @@ use Glpi\Dashboard\Dashboard;
  * styling (colors, gradients, legends, per-card row limits) that was
  * hand-picked for readability.
  */
-class PluginMoresecurityDashboardGrid
+class DashboardGrid
 {
     private const DASHBOARD_KEY = 'plugin_moresecurity_board';
 

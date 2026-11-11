@@ -30,6 +30,8 @@
  */
 
 use Glpi\Application\View\TemplateRenderer;
+use GlpiPlugin\Moresecurity\Limiter;
+use GlpiPlugin\Moresecurity\Lostpassword;
 
 /** @var array $CFG_GLPI */
 global $CFG_GLPI;
@@ -40,10 +42,10 @@ if (
     !$CFG_GLPI['notifications_mailing']
     || !countElementsInTable(
         'glpi_notifications',
-        ['itemtype' => 'User', 'event' => 'passwordforget', 'is_active' => 1]
+        ['itemtype' => 'User', 'event' => 'passwordforget', 'is_active' => 1],
     )
 ) {
-    exit();
+    return;
 }
 
 $user = new User();
@@ -58,10 +60,8 @@ if (isset($_REQUEST['password_forget_token'])) {
     if (isset($_POST['email'])) {
         // La política (validación, presupuesto por IP y por email) la aplica
         // el gate de post_init para esta ruta y para la nativa (MS-04).
-        $user->showForgetPassword(PluginMoresecurityLimiter::cleanEmail($_POST['email']) ?? '');
+        $user->showForgetPassword(Limiter::cleanEmail($_POST['email']) ?? '');
     } else {
-        PluginMoresecurityLostpassword::showPasswordForgetRequestForm();
+        Lostpassword::showPasswordForgetRequestForm();
     }
 }
-
-exit();

@@ -29,27 +29,88 @@
  * -------------------------------------------------------------------------
  */
 
+use GlpiPlugin\Moresecurity\AttemptLog;
+use GlpiPlugin\Moresecurity\Config;
+use GlpiPlugin\Moresecurity\DashboardCards;
+use GlpiPlugin\Moresecurity\DashboardGrid;
+use GlpiPlugin\Moresecurity\Geoip;
+use GlpiPlugin\Moresecurity\Limiter;
+use GlpiPlugin\Moresecurity\Login;
+use GlpiPlugin\Moresecurity\Loginip;
+use GlpiPlugin\Moresecurity\Lostpassword;
+use GlpiPlugin\Moresecurity\Profile;
+use GlpiPlugin\Moresecurity\Retention;
+use GlpiPlugin\Moresecurity\VerifiedLogin;
+use GlpiPlugin\Moresecurity\Whitelist;
 use Safe\Exceptions\SafeExceptionInterface;
+use Symfony\Component\HttpFoundation\Request as SymfonyRequest;
 
-use function Safe\base64_decode;
-use function Safe\glob;
+use function Safe\file_get_contents;
+use function Safe\json_decode;
 use function Safe\json_encode;
 use function Safe\parse_url;
 use function Safe\preg_match;
 use function Safe\preg_replace;
 
+/**
+ * Clases del plugin que tienen install()/uninstall(), en orden de instalación.
+ *
+ * @return list<class-string>
+ */
+function plugin_moresecurity_get_installable_classes(): array
+{
+    return [
+        AttemptLog::class,
+        Config::class,
+        DashboardGrid::class,
+        Geoip::class,
+        Login::class,
+        Loginip::class,
+        Lostpassword::class,
+        Profile::class,
+        Retention::class,
+        Whitelist::class,
+    ];
+}
+
+/**
+ * Hasta la 2.x las clases se llamaban PluginMoresecurity<Nombre> y ese nombre
+ * quedó guardado en tablas del núcleo (acciones automáticas, preferencias de
+ * visualización, búsquedas guardadas, historial...). Se pasa todo al nombre con
+ * namespace antes de registrar nada, o las acciones automáticas se duplicarían.
+ */
+function plugin_moresecurity_migrate_legacy_itemtypes(Migration $migration): void
+{
+    /** @var \DBmysql $DB */
+    global $DB;
+
+    $classes = array_merge(plugin_moresecurity_get_installable_classes(), [DashboardCards::class, Limiter::class]);
+    foreach ($classes as $fqcn) {
+        $legacy = 'PluginMoresecurity' . substr(strrchr($fqcn, '\\'), 1);
+
+        // El índice único (itemtype, name) de las acciones automáticas aborta el
+        // cambio si ya existe la fila nueva: se descarta la antigua.
+        $existing = array_column(iterator_to_array($DB->request([
+            'SELECT' => ['name'],
+            'FROM'   => 'glpi_crontasks',
+            'WHERE'  => ['itemtype' => $fqcn],
+        ])), 'name');
+        if ($existing !== []) {
+            $DB->delete('glpi_crontasks', ['itemtype' => $legacy, 'name' => $existing]);
+        }
+
+        $migration->renameItemtype($legacy, $fqcn, false);
+    }
+}
+
 function plugin_moresecurity_install()
 {
     $migration = new Migration(PLUGIN_MORESECURITY_VERSION);
 
-    foreach (glob(dirname(__FILE__) . '/inc/*') as $filepath) {
-        if (preg_match("/inc.(.+)\.class.php/", $filepath, $matches)) {
-            $classname = 'PluginMoresecurity' . ucfirst($matches[1]);
-            include_once($filepath);
-            if (method_exists($classname, 'install')) {
-                $classname::install($migration);
-            }
-        }
+    plugin_moresecurity_migrate_legacy_itemtypes($migration);
+
+    foreach (plugin_moresecurity_get_installable_classes() as $classname) {
+        $classname::install($migration);
     }
     $migration->executeMigration();
 
@@ -60,14 +121,8 @@ function plugin_moresecurity_uninstall()
 {
     $migration = new Migration(PLUGIN_MORESECURITY_VERSION);
 
-    foreach (glob(dirname(__FILE__) . '/inc/*') as $filepath) {
-        if (preg_match("/inc.(.+)\.class.php/", $filepath, $matches)) {
-            $classname = 'PluginMoresecurity' . ucfirst($matches[1]);
-            include_once($filepath);
-            if (method_exists($classname, 'uninstall')) {
-                $classname::uninstall($migration);
-            }
-        }
+    foreach (plugin_moresecurity_get_installable_classes() as $classname) {
+        $classname::uninstall($migration);
     }
     $migration->executeMigration();
 
@@ -79,9 +134,8 @@ function plugin_moresecurity_getDropdown(): array
     $plugin = new Plugin();
 
     if ($plugin->isActivated('moresecurity')) {
-        include_once dirname(__FILE__) . '/inc/whitelist.class.php';
         return [
-            PluginMoresecurityWhitelist::class => PluginMoresecurityWhitelist::getTypeName(),
+            Whitelist::class => Whitelist::getTypeName(),
         ];
     }
 
@@ -90,6 +144,7 @@ function plugin_moresecurity_getDropdown(): array
 
 function plugin_moresecurity_displayLogin()
 {
+    /** @var array $CFG_GLPI */
     global $CFG_GLPI;
 
     $root = $CFG_GLPI['root_doc'];
@@ -111,6 +166,7 @@ JAVASCRIPT;
  */
 function plugin_moresecurity_deny(int $status, array $errors, string $suffix = ''): never
 {
+    /** @var array $CFG_GLPI */
     global $CFG_GLPI;
 
     http_response_code($status);
@@ -131,18 +187,19 @@ function plugin_moresecurity_deny(int $status, array $errors, string $suffix = '
  */
 function plugin_moresecurity_process_login(): void
 {
+    /** @var array $CFG_GLPI */
     global $CFG_GLPI;
 
     // Sin POST o sin credenciales no hay intento de login real: no se
     // comprueba ni se cuenta nada (evita el DoS colectivo de UC-02). Los
     // tipos y longitudes se validan antes de tocar la base de datos (MS-11).
-    $login = PluginMoresecurityLimiter::cleanIdentity($_POST['login_name'] ?? null);
+    $login = Limiter::cleanIdentity($_POST['login_name'] ?? null);
     if (
         ($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST'
         || $login === null
-        || !PluginMoresecurityLimiter::isPlainString($_POST['login_password'] ?? null)
+        || !Limiter::isPlainString($_POST['login_password'] ?? null)
         || $_POST['login_password'] === ''
-        || (isset($_POST['auth']) && !PluginMoresecurityLimiter::isPlainString($_POST['auth'], 64))
+        || (isset($_POST['auth']) && !Limiter::isPlainString($_POST['auth'], 64))
     ) {
         plugin_moresecurity_deny(400, [__('Incorrect username or password')]);
     }
@@ -161,17 +218,17 @@ function plugin_moresecurity_process_login(): void
     $suffix = str_replace("?", "&", $REDIRECT);
 
     $auth = new Auth();
-    $ip = PluginMoresecurityLimiter::getClientIp();
-    $whitelisted = $ip && PluginMoresecurityWhitelist::isWhitelisted($ip);
+    $ip = Limiter::getClientIp();
+    $whitelisted = $ip && Whitelist::isWhitelisted($ip);
 
     if (!$whitelisted && $ip !== '') {
         // Una IP ya bloqueada se rechaza antes de evaluar el geobloqueo y sin
         // escribir nada: no hay trabajo ni filas por petición (SEV-02).
-        if (PluginMoresecurityLoginip::isIpBlockActive($ip)) {
+        if (Loginip::isIpBlockActive($ip)) {
             plugin_moresecurity_deny(
                 401,
                 [__('Too many failed login attempts from your IP. Please try again later.', 'moresecurity')],
-                $suffix
+                $suffix,
             );
         }
 
@@ -179,29 +236,29 @@ function plugin_moresecurity_process_login(): void
         // whitelist también le vale de válvula de seguridad. Las denegaciones
         // se cuentan contra el presupuesto de la IP para que un origen
         // insistente acabe bloqueado en lugar de escribir sin límite.
-        if (!PluginMoresecurityGeoip::isAllowed($ip, $login)) {
-            PluginMoresecurityLoginip::countGeoDenial($ip);
+        if (!Geoip::isAllowed($ip, $login)) {
+            Loginip::countGeoDenial($ip);
             plugin_moresecurity_deny(
                 403,
                 [__('Login from your location is not permitted.', 'moresecurity')],
-                $suffix
+                $suffix,
             );
         }
     }
 
     if (!$whitelisted) {
-        $denied = PluginMoresecurityLogin::reserve($login, $ip);
+        $denied = Login::reserve($login, $ip);
         if ($denied === 'ip') {
             plugin_moresecurity_deny(
                 401,
                 [__('Too many failed login attempts from your IP. Please try again later.', 'moresecurity')],
-                $suffix
+                $suffix,
             );
         } elseif ($denied !== null) {
             plugin_moresecurity_deny(
                 401,
                 [__('Too many failed login attempts. Please try again later', 'moresecurity')],
-                $suffix
+                $suffix,
             );
         }
     }
@@ -212,19 +269,19 @@ function plugin_moresecurity_process_login(): void
         // Contraseña correcta pero pendiente de MFA (o alta de MFA): el
         // intento no fue un fallo, se libera el contador (H11).
         if (!$whitelisted && $auth->auth_succeded) {
-            PluginMoresecurityLogin::clearLoginTry($login);
+            Login::clearLoginTry($login);
         }
         throw $e;
     }
 
     if ($success) {
-        PluginMoresecurityLogin::clearLoginTry($login);
+        Login::clearLoginTry($login);
         Auth::redirectIfAuthenticated();
     } else {
         // El intento ya se contó al reservarlo; una IP en whitelist no
         // alimenta ningún contador (UC-08), pero el fallo sí queda en el
         // registro de seguridad.
-        PluginMoresecurityAttemptLog::recordFailedLogin($login, $ip);
+        AttemptLog::recordFailedLogin($login, $ip);
         plugin_moresecurity_deny(401, $auth->getErrors(), $suffix);
     }
 }
@@ -236,74 +293,458 @@ function plugin_moresecurity_process_login(): void
  */
 function plugin_moresecurity_enforce_recovery(): string
 {
-    $email = PluginMoresecurityLimiter::cleanEmail($_POST['email'] ?? null);
+    $email = Limiter::cleanEmail($_POST['email'] ?? null);
     if ($email === null) {
         plugin_moresecurity_deny(400, [__('Please enter a valid email address.', 'moresecurity')]);
     }
 
-    $ip = PluginMoresecurityLimiter::getClientIp();
-    if (!($ip && PluginMoresecurityWhitelist::isWhitelisted($ip))) {
-        if (PluginMoresecurityLostpassword::reserve($email, $ip) !== null) {
+    $ip = Limiter::getClientIp();
+    if (!($ip && Whitelist::isWhitelisted($ip))) {
+        if (Lostpassword::reserve($email, $ip) !== null) {
             plugin_moresecurity_deny(401, [__('Too many password change attempts. Please try again later.', 'moresecurity')]);
         }
     }
 
-    PluginMoresecurityAttemptLog::recordResetRequest($email, $ip);
+    AttemptLog::recordResetRequest($email, $ip);
 
     return $email;
 }
 
 /**
- * CalDAV (/caldav.php, HTTP Basic): mismas reglas que el login web. Se
- * rechaza si la IP o la cuenta están bloqueadas o la IP no está permitida; el
- * intento se reserva antes y se libera al terminar si no hubo 401.
+ * Ruta tal como la enruta el núcleo: el path info de Symfony (sin el
+ * subdirectorio de instalación ni un `/index.php` delante), decodificado como
+ * hace el UrlMatcher. Los controladores de CalDAV, REST y HL API se declaran
+ * como `/caldav.php{.*}`, `/apirest.php{.*}` y `/api.php{.*}`, así que una
+ * ruta solo llega a ellos si EMPIEZA por esos prefijos.
  */
-function plugin_moresecurity_enforce_caldav_gate(): void
+function plugin_moresecurity_get_route_path(): string
 {
-    // Apache no siempre rellena PHP_AUTH_USER (sabre lee la cabecera directa).
-    $user = $_SERVER['PHP_AUTH_USER'] ?? null;
-    if ($user === null) {
-        $header = (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
-        if (stripos($header, 'Basic ') === 0) {
-            try {
-                $decoded = base64_decode(substr($header, 6), true);
-            } catch (SafeExceptionInterface $e) {
-                // Cabecera mal formada: sin usuario, igual que antes con false.
-                $decoded = null;
-            }
-            $user = is_string($decoded) && str_contains($decoded, ':') ? explode(':', $decoded, 2)[0] : null;
-        }
+    try {
+        $path_info = (new SymfonyRequest(server: $_SERVER))->getPathInfo();
+    } catch (Throwable $e) {
+        return '';
     }
-    $login = PluginMoresecurityLimiter::cleanIdentity($user);
-    $ip    = PluginMoresecurityLimiter::getClientIp();
-    if ($login === null || ($ip !== '' && PluginMoresecurityWhitelist::isWhitelisted($ip))) {
+
+    return rawurldecode($path_info);
+}
+
+/**
+ * Forma en texto que tendrá un identificador recibido por la API cuando el
+ * núcleo lo use (coerción escalar de PHP: 123 → "123", true → "1"), o null si
+ * no es escalar: el núcleo no llega a verificar un array u objeto.
+ */
+function plugin_moresecurity_scalar_string(mixed $value): ?string
+{
+    return is_scalar($value) ? (string) $value : null;
+}
+
+/**
+ * Presupuesto de intentos común a los canales que verifican contraseñas sin
+ * pasar por el formulario web (CalDAV, REST, HL API): rechaza si la IP está
+ * bloqueada o no permitida por país y reserva el intento de la cuenta antes de
+ * que el núcleo verifique la contraseña.
+ *
+ * Al terminar, el intento solo se libera si el núcleo autenticó de verdad esa
+ * cuenta en esta petición (VerifiedLogin). Nunca por el código HTTP: una ruta
+ * que responde sin verificar contraseñas no puede borrar los contadores.
+ *
+ * $login null significa que la petición no trae credenciales que el núcleo
+ * vaya a verificar. El bloqueo de IP y el geobloqueo se evalúan igualmente:
+ * un origen bloqueado no debe seguir llegando al núcleo.
+ *
+ * @param callable(int): never $refuse responde y termina con el estado dado
+ */
+function plugin_moresecurity_enforce_login_budget(?string $login, callable $refuse): void
+{
+    $ip = Limiter::getClientIp();
+    if ($ip !== '' && Whitelist::isWhitelisted($ip)) {
         return;
     }
 
+    if ($ip !== '') {
+        if (Loginip::isIpBlockActive($ip)) {
+            $refuse(429);
+        }
+        if (!Geoip::isAllowed($ip, $login ?? '')) {
+            Loginip::countGeoDenial($ip);
+            $refuse(403);
+        }
+    }
+
+    if ($login === null) {
+        return;
+    }
+
+    if (Login::reserve($login, $ip) !== null) {
+        $refuse(429);
+    }
+
+    register_shutdown_function(static function () use ($login): void {
+        if (VerifiedLogin::isVerified($login)) {
+            Login::clearLoginTry($login);
+        }
+    });
+}
+
+/**
+ * Usuario de HTTP Basic tal como lo verá el servidor CalDAV (sabre/http): la
+ * cabecera Authorization se reconstruye desde $_SERVER igual que en
+ * Sapi::createFromServerArray() (gana la última fuente) y se decodifica igual
+ * que en Auth\Basic::getCredentials() (base64 no estricto). Null si no hay
+ * credenciales Basic.
+ */
+function plugin_moresecurity_read_caldav_user(): ?string
+{
+    $header = null;
+    foreach ($_SERVER as $key => $value) {
+        $key = (string) $key;
+        if ($key === 'PHP_AUTH_USER') {
+            if (isset($_SERVER['PHP_AUTH_PW'])) {
+                $header = 'Basic ' . base64_encode((string) $value . ':' . (string) $_SERVER['PHP_AUTH_PW']);
+            }
+        } elseif ($key === 'PHP_AUTH_DIGEST') {
+            $header = 'Digest ' . (string) $value;
+        } elseif ($key === 'REDIRECT_HTTP_AUTHORIZATION' || $key === 'HTTP_AUTHORIZATION') {
+            $header = (string) $value;
+        }
+    }
+
+    if ($header === null || strtolower(substr($header, 0, 6)) !== 'basic ') {
+        return null;
+    }
+
+    $decoded = base64_decode(substr($header, 6));
+    if (!is_string($decoded)) {
+        return null;
+    }
+    $credentials = explode(':', $decoded, 2);
+
+    return count($credentials) === 2 ? $credentials[0] : null;
+}
+
+/**
+ * CalDAV (/caldav.php, HTTP Basic): mismas reglas que el login web. Se
+ * rechaza si la IP o la cuenta están bloqueadas o la IP no está permitida; el
+ * intento se reserva antes y solo se libera si el núcleo autenticó la cuenta.
+ */
+function plugin_moresecurity_enforce_caldav_gate(): void
+{
     $refuse = static function (int $status): never {
         http_response_code($status);
         exit;
     };
 
-    if ($ip !== '') {
-        if (PluginMoresecurityLoginip::isIpBlockActive($ip)) {
-            $refuse(429);
-        }
-        if (!PluginMoresecurityGeoip::isAllowed($ip, $login)) {
-            PluginMoresecurityLoginip::countGeoDenial($ip);
-            $refuse(403);
+    $user  = plugin_moresecurity_read_caldav_user();
+    $login = null;
+    if ($user !== null && trim($user) !== '') {
+        // El núcleo verificaría la contraseña de esta identidad: si no se
+        // puede contar (caracteres de control, longitud) se rechaza, igual
+        // que en el login web, en vez de dejarla pasar sin presupuesto.
+        $login = Limiter::cleanIdentity($user);
+        if ($login === null) {
+            $refuse(400);
         }
     }
 
-    if (PluginMoresecurityLogin::reserve($login, $ip) !== null) {
+    plugin_moresecurity_enforce_login_budget($login, $refuse);
+}
+
+/**
+ * Cuerpo completo de la petición, como lo lee el núcleo (API::getHttpBody(),
+ * HL ApiController).
+ */
+function plugin_moresecurity_read_input(): string
+{
+    try {
+        return file_get_contents('php://input');
+    } catch (SafeExceptionInterface $e) {
+        return '';
+    }
+}
+
+/**
+ * Decodifica JSON a array; null si no es JSON válido o no es un array/objeto.
+ *
+ * @return array<array-key, mixed>|null
+ */
+function plugin_moresecurity_decode_json_array(string $json): ?array
+{
+    try {
+        $decoded = json_decode($json, true);
+    } catch (SafeExceptionInterface $e) {
+        return null;
+    }
+
+    return is_array($decoded) ? $decoded : null;
+}
+
+/**
+ * Parámetros de una petición REST (`/apirest.php`, `/api.php/v1`) con las
+ * mismas fuentes, precedencia y conversiones que APIRest::parseIncomingParams():
+ * URL < cuerpo (JSON si no hay Content-Type, `uploadManifest` en multipart,
+ * formulario) < HTTP Basic, y los valores "true"/"false" pasan a booleanos.
+ *
+ * @return array<array-key, mixed>
+ */
+function plugin_moresecurity_read_rest_params(): array
+{
+    $params = [];
+    parse_str((string) ($_SERVER['QUERY_STRING'] ?? ''), $params);
+
+    $content_type = (string) ($_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? 'application/json');
+
+    $body_params = [];
+    if (str_contains($content_type, 'application/json')) {
+        $body = trim(plugin_moresecurity_read_input());
+        if ($body !== '') {
+            // JSON inválido: el núcleo responde 400 sin verificar nada.
+            $body_params = plugin_moresecurity_decode_json_array($body) ?? [];
+        }
+    } elseif (str_contains($content_type, 'multipart/form-data')) {
+        // Con multipart php://input llega vacío: el núcleo lee el manifiesto
+        // (y exige al menos un fichero adjunto).
+        $manifest = $_REQUEST['uploadManifest'] ?? null;
+        if (count($_FILES) > 0 && is_string($manifest)) {
+            $body_params = plugin_moresecurity_decode_json_array($manifest) ?? [];
+        }
+    } elseif (str_contains($content_type, 'application/x-www-form-urlencoded')) {
+        parse_str(trim(plugin_moresecurity_read_input()), $body_params);
+    }
+    foreach ($body_params as $key => $value) {
+        $params[$key] = $value;
+    }
+
+    if (isset($_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW'])) {
+        $params['login']    = $_SERVER['PHP_AUTH_USER'];
+        $params['password'] = $_SERVER['PHP_AUTH_PW'];
+    }
+
+    foreach ($params as $key => $value) {
+        if ($value === 'true') {
+            $params[$key] = true;
+        } elseif ($value === 'false') {
+            $params[$key] = false;
+        }
+    }
+
+    return $params;
+}
+
+/**
+ * Parámetros de una petición a la HL API con las mismas fuentes y precedencia
+ * que Router::handleRequest(): $_REQUEST (consulta, formulario y multipart) y,
+ * si el Content-Type es exactamente application/json, el cuerpo JSON encima.
+ *
+ * @return array<array-key, mixed>
+ */
+function plugin_moresecurity_read_hl_params(): array
+{
+    $params = $_REQUEST;
+
+    $content_type = explode(';', (string) ($_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? ''))[0];
+    if ($content_type === 'application/json') {
+        $body = plugin_moresecurity_decode_json_array(plugin_moresecurity_read_input());
+        if ($body === null) {
+            return []; // el núcleo responde 400 sin invocar la ruta
+        }
+        foreach ($body as $key => $value) {
+            $params[(string) $key] = $value;
+        }
+    }
+
+    return $params;
+}
+
+/**
+ * HL API: concesión OAuth *password* en `POST /api.php[/vX.Y]/token`
+ * (`grant_type=password`, `username`, `password`), con el mismo criterio que
+ * ApiController (prefijo de versión), Router::matchAll() (ruta sin distinguir
+ * mayúsculas) y League (AbstractGrant::parseParam(): cualquier escalar, como
+ * texto recortado).
+ *
+ * @return array{kind: 'login', channel: 'hl', identity: ?string}|null
+ */
+function plugin_moresecurity_read_hl_token_request(string $relative): ?array
+{
+    if (strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? '')) !== 'POST') {
+        return null;
+    }
+    $relative = preg_replace('#^/v\d+(?:\.\d+)*/#', '/', $relative);
+    if (!is_string($relative) || strtolower($relative) !== '/token') {
+        return null;
+    }
+
+    $params = plugin_moresecurity_read_hl_params();
+    if (($params['grant_type'] ?? null) !== 'password') {
+        return null;
+    }
+
+    $username = plugin_moresecurity_scalar_string($params['username'] ?? null);
+    $password = plugin_moresecurity_scalar_string($params['password'] ?? null);
+    if ($username === null || trim($username) === '' || $password === null || trim($password) === '') {
+        return null;
+    }
+
+    return ['kind' => 'login', 'channel' => 'hl', 'identity' => Limiter::cleanIdentity($username)];
+}
+
+/**
+ * Qué intento de autenticación lleva una petición a las APIs, decidido con la
+ * misma ruta y los mismos parámetros que usará el núcleo:
+ *
+ *  - REST (`/apirest.php…` y `/api.php/v1…`, ApiController los envía al mismo
+ *    APIRest): recurso `initSession` con `login`+`password` (si el login por
+ *    credenciales está activado) y `lostPassword` con `email`. Solo con la API
+ *    REST activada.
+ *  - HL API (`POST /api.php[/vX]/token`, concesión *password*): el núcleo la
+ *    atiende aunque la API REST esté desactivada (e incluso con la HL API
+ *    desactivada), así que no depende de ninguna de las dos opciones.
+ *
+ * `identity` null en un login significa que el núcleo verificaría una
+ * identidad que el plugin no puede contar: la petición se rechaza.
+ *
+ * @return array{kind: 'login'|'recovery', channel: 'rest'|'hl', identity: ?string}|null
+ */
+function plugin_moresecurity_read_api_request(string $route): ?array
+{
+    /** @var array $CFG_GLPI */
+    global $CFG_GLPI;
+
+    if (str_starts_with($route, '/apirest.php')) {
+        $rest_info = substr($route, strlen('/apirest.php'));
+    } elseif (str_starts_with($route, '/api.php')) {
+        $info     = substr($route, strlen('/api.php'));
+        $relative = '/' . trim($info, '/');
+        if (preg_match('#^/v1(/|$)#', $relative) !== 1) {
+            return plugin_moresecurity_read_hl_token_request($relative);
+        }
+        $rest_info = $info;
+    } else {
+        return null;
+    }
+
+    if (empty($CFG_GLPI['enable_api'])) {
+        return null;
+    }
+
+    // Recurso solicitado, calculado igual que APIRest::call().
+    $rest_info = str_replace('api/', '', $rest_info);
+    $rest_info = str_replace('v1/', '', $rest_info);
+    $resource  = trim(explode('/', trim($rest_info, '/'))[0]);
+
+    if ($resource === 'lostPassword') {
+        $params = plugin_moresecurity_read_rest_params();
+        // Con password_forget_token el núcleo completa un cambio de
+        // contraseña y no envía ningún correo.
+        if (!isset($params['email']) || isset($params['password_forget_token'])) {
+            return null;
+        }
+        $email = $params['email'];
+
+        return ['kind' => 'recovery', 'channel' => 'rest', 'identity' => is_string($email) ? Limiter::cleanEmail($email) : null];
+    }
+
+    if ($resource !== 'initSession' || empty($CFG_GLPI['enable_api_login_credentials'])) {
+        return null;
+    }
+
+    // Mismo criterio que API::initSession() para usar login y contraseña.
+    $params   = plugin_moresecurity_read_rest_params();
+    $login    = $params['login'] ?? '';
+    $password = $params['password'] ?? '';
+    if ($login === '' || $password === '') {
+        return null;
+    }
+    $login = plugin_moresecurity_scalar_string($login);
+    if ($login === null || trim($login) === '') {
+        return null; // array, objeto o false: el núcleo no llega a verificarlo
+    }
+
+    return ['kind' => 'login', 'channel' => 'rest', 'identity' => Limiter::cleanIdentity($login)];
+}
+
+/**
+ * REST (`initSession`, `lostPassword`) y HL API (`/api.php/token`, concesión
+ * password): mismas reglas que el login web y la recuperación.
+ */
+function plugin_moresecurity_enforce_api_gate(string $route): void
+{
+    $request = plugin_moresecurity_read_api_request($route);
+    if ($request === null) {
+        return;
+    }
+
+    $is_rest = $request['channel'] === 'rest';
+    $respond = static function (int $status, string $code, string $message) use ($is_rest): never {
+        http_response_code($status);
+        header('Content-Type: application/json; charset=UTF-8');
+        echo json_encode($is_rest ? [$code, $message] : ['error' => strtolower(substr($code, 6)), 'error_description' => $message]);
+        exit;
+    };
+    $refuse = static function (int $status) use ($respond): never {
+        $respond($status, 'ERROR_TOO_MANY_ATTEMPTS', __('Too many failed login attempts. Please try again later.', 'moresecurity'));
+    };
+
+    if ($request['kind'] === 'login') {
+        if ($request['identity'] === null) {
+            $respond(400, 'ERROR_INVALID_LOGIN', __('Incorrect username or password'));
+        }
+        if ($request['channel'] === 'hl') {
+            VerifiedLogin::listenOAuth();
+        }
+        plugin_moresecurity_enforce_login_budget($request['identity'], $refuse);
+
+        return;
+    }
+
+    // lostPassword: solo el presupuesto por email y por IP.
+    $ip = Limiter::getClientIp();
+    if ($request['identity'] === null || ($ip !== '' && Whitelist::isWhitelisted($ip))) {
+        return;
+    }
+    if (Lostpassword::reserve($request['identity'], $ip) !== null) {
         $refuse(429);
     }
+    AttemptLog::recordResetRequest($request['identity'], $ip);
+}
 
-    register_shutdown_function(static function () use ($login): void {
-        if (http_response_code() !== 401) {
-            PluginMoresecurityLogin::clearLoginTry($login);
+/**
+ * Regla anti-CSRF de GLPI 12 (CheckCsrfListener) replicada para los hooks.
+ *
+ * Session::validateCSRF() devuelve siempre true en GLPI 12 y los hooks
+ * post_init se ejecutan antes del listener de CSRF del núcleo, así que el
+ * gate no puede delegar en él: sin esta comprobación un POST cross-site
+ * contaría intentos y autenticaría. Una petición sin cabeceras de navegador
+ * (curl, servidor a servidor) no está sujeta a CSRF, igual que en el núcleo.
+ */
+function plugin_moresecurity_is_csrf_safe(): bool
+{
+    $sec_fetch_site = $_SERVER['HTTP_SEC_FETCH_SITE'] ?? null;
+    if (is_string($sec_fetch_site)) {
+        return in_array($sec_fetch_site, ['same-origin', 'none'], true);
+    }
+
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? null;
+    $host   = $_SERVER['HTTP_HOST'] ?? null;
+    if (is_string($origin) && is_string($host)) {
+        try {
+            $origin_host = parse_url($origin, PHP_URL_HOST);
+        } catch (SafeExceptionInterface $e) {
+            return false;
         }
-    });
+        if (!is_string($origin_host) || $origin_host === '') {
+            return false;
+        }
+        try {
+            $origin_port = parse_url($origin, PHP_URL_PORT);
+        } catch (SafeExceptionInterface $e) {
+            return false;
+        }
+
+        return (is_int($origin_port) ? "$origin_host:$origin_port" : $origin_host) === $host;
+    }
+
+    return true;
 }
 
 /**
@@ -312,12 +753,13 @@ function plugin_moresecurity_enforce_caldav_gate(): void
  *
  * - Se aplica también con sesión autenticada (MS-01): cambiar de identidad
  *   por la ruta nativa no puede saltarse los presupuestos.
- * - Antes de autenticar o escribir contadores exige un token CSRF válido
- *   (MS-07). Sin token válido no se hace nada y el control CSRF nativo
- *   rechaza la petición después.
+ * - Antes de autenticar o escribir contadores exige una petición same-origin
+ *   (MS-07, regla de cabeceras de GLPI 12). Si no lo es no se hace nada y el
+ *   control CSRF nativo rechaza la petición después.
  */
 function plugin_moresecurity_enforce_login_gate(): void
 {
+    /** @var array $CFG_GLPI */
     global $CFG_GLPI;
 
     try {
@@ -328,16 +770,24 @@ function plugin_moresecurity_enforce_login_gate(): void
         $path = '';
     }
 
-    // CalDAV verifica contraseñas con HTTP Basic en cualquier método. El
-    // núcleo enruta al servidor CalDAV TODA ruta que empiece por /caldav.php
-    // (sin exigir '/' ni fin de ruta después), así que se usa el mismo
-    // prefijo: /caldav.phpX o /caldav.php.ics no pueden saltarse el gate.
-    $root_doc = (string) ($CFG_GLPI['root_doc'] ?? '');
-    $relative = ($root_doc !== '' && str_starts_with($path, $root_doc))
-        ? substr($path, strlen($root_doc))
-        : $path;
-    if (str_starts_with($relative, '/caldav.php')) {
+    // Los canales que verifican contraseñas fuera del formulario se reconocen
+    // por la ruta que enruta el núcleo (path info de Symfony), anclada al
+    // comienzo como en sus controladores: `/caldav.php{.*}` (así que
+    // `/caldav.phpX` también llega al servidor CalDAV), `/apirest.php{.*}` y
+    // `/api.php{.*}`. Así cubre instalaciones en subdirectorio y rutas con
+    // `/index.php` delante, y no se dispara en rutas que solo contienen el
+    // nombre (`/noexiste/caldav.php`).
+    $route = plugin_moresecurity_get_route_path();
+
+    // CalDAV verifica contraseñas con HTTP Basic en cualquier método.
+    if (str_starts_with($route, '/caldav.php')) {
         plugin_moresecurity_enforce_caldav_gate();
+    }
+
+    // REST y HL API verifican contraseñas con cualquier verbo (initSession por
+    // GET, lostPassword por PUT) y con nombres de campo distintos del formulario.
+    if (str_starts_with($route, '/apirest.php') || str_starts_with($route, '/api.php')) {
+        plugin_moresecurity_enforce_api_gate($route);
     }
 
     if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
@@ -347,10 +797,10 @@ function plugin_moresecurity_enforce_login_gate(): void
     if (isset($_POST['login_name']) || isset($_POST['login_password'])) {
         // Ningún otro script del núcleo procesa credenciales: se atiende
         // cualquier ruta, no solo las conocidas, para no dejar atajos.
-        // Sin token válido en el cuerpo no se devuelve el control: el núcleo
-        // aceptaría el token de cabecera y abriría sesión sin pasar por el
-        // geobloqueo ni los contadores.
-        if (!Session::validateCSRF($_POST)) {
+        // Una petición cross-site no se procesa aquí: el listener CSRF del
+        // núcleo corre después de este hook, así que se corta antes de tocar
+        // contadores o autenticar (Session::validateCSRF() ya no valida).
+        if (!plugin_moresecurity_is_csrf_safe()) {
             plugin_moresecurity_deny(403, [__('Invalid or expired security token. Please reload the page and try again.', 'moresecurity')]);
         }
         try {
@@ -371,30 +821,20 @@ function plugin_moresecurity_enforce_login_gate(): void
         }
     }
 
-    // Cada ruta se limita mientras el núcleo enviaría su correo: initpassword.php
-    // depende de la notificación 'passwordinit'; las de recuperación, de
-    // 'passwordforget'.
-    $recovery_event = null;
-    if (preg_match('#/front/initpassword\.php(/|$)#', $path)) {
-        $recovery_event = 'passwordinit';
-    } elseif (preg_match('#/(front/lostpassword\.php|plugins/moresecurity/front/lostpassword\.form\.php)(/|$)#', $path)) {
-        $recovery_event = 'passwordforget';
-    }
-
+    // initpassword.php envía el evento `passwordinit`; el resto, `passwordforget`:
+    // el gate se activa con la misma notificación que exige el núcleo para la ruta.
+    $recovery_event = preg_match('#/front/initpassword\.php(/|$)#', $path) === 1 ? 'passwordinit' : 'passwordforget';
     if (
-        $recovery_event !== null
-        && isset($_POST['email'])
+        isset($_POST['email'])
         && !isset($_REQUEST['password_forget_token'])
+        && preg_match('#/(front/lostpassword\.php|front/initpassword\.php|plugins/moresecurity/front/lostpassword\.form\.php)(/|$)#', $path)
         && $CFG_GLPI['notifications_mailing']
         && countElementsInTable('glpi_notifications', ['itemtype' => 'User', 'event' => $recovery_event, 'is_active' => 1])
     ) {
-        // Sin token válido en el cuerpo no se devuelve el control: el núcleo
-        // aceptaría el token de cabecera (XHR, sin consumirlo) y enviaría el
-        // correo sin pasar por los presupuestos por email e IP.
-        // El token no se consume: si la solicitud se admite, continúa hacia
-        // el controlador, cuyo control CSRF nativo lo consumirá.
-        if (!Session::validateCSRF($_POST, true)) {
-            plugin_moresecurity_deny(403, [__('Invalid or expired security token. Please reload the page and try again.', 'moresecurity')]);
+        // Cross-site: no se cuenta nada y el control CSRF nativo la rechaza
+        // (403) después; si se admite, continúa hacia el controlador.
+        if (!plugin_moresecurity_is_csrf_safe()) {
+            return;
         }
         try {
             plugin_moresecurity_enforce_recovery();
@@ -402,6 +842,6 @@ function plugin_moresecurity_enforce_login_gate(): void
             $e->getResponse()->send();
             exit;
         }
-        $_POST['email'] = PluginMoresecurityLimiter::cleanEmail($_POST['email']);
+        $_POST['email'] = Limiter::cleanEmail($_POST['email']);
     }
 }

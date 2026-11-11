@@ -52,51 +52,51 @@ msgid "Too many password change attempts. Please try again later."
 msgstr ""
 "Demasiados intentos de cambio de contraseña. Vuelva a intentarlo más tarde."
 
-#: inc/attemptlog.class.php inc/profile.class.php
+#: src/AttemptLog.php src/Profile.php
 msgid "Security log"
 msgstr "Registro de seguridad"
 
-#: inc/attemptlog.class.php
+#: src/AttemptLog.php
 msgid "Login"
 msgstr "Iniciar sesión"
 
-#: inc/attemptlog.class.php
+#: src/AttemptLog.php
 msgid "Login IP"
 msgstr "IP de inicio de sesión"
 
-#: inc/attemptlog.class.php
+#: src/AttemptLog.php
 msgid "Password reset"
 msgstr "Restablecimiento de contraseña"
 
-#: inc/attemptlog.class.php
+#: src/AttemptLog.php
 msgid "Password reset IP"
 msgstr "IP de restablecimiento de contraseña"
 
-#: inc/attemptlog.class.php
+#: src/AttemptLog.php
 msgid "Login Geoblocked"
 msgstr "Inicio de sesión geobloqueado"
 
-#: inc/attemptlog.class.php
+#: src/AttemptLog.php
 msgid "Blocked login attempt for %1$s from IP %2$s (geoblocked: %3$s)"
 msgstr ""
 "Intento de inicio de sesión bloqueado para %1$s desde la IP %2$s "
 "(geobloqueado: %3$s)"
 
-#: inc/attemptlog.class.php templates/attempt_summary.html.twig
+#: src/AttemptLog.php templates/attempt_summary.html.twig
 msgid "Type"
 msgstr "Tipo"
 
-#: inc/attemptlog.class.php templates/attempt_summary.html.twig
+#: src/AttemptLog.php templates/attempt_summary.html.twig
 msgid "Country"
 msgstr "País"
 
-#: inc/attemptlog.class.php templates/attempt_tabs.html.twig
+#: src/AttemptLog.php templates/attempt_tabs.html.twig
 msgid "Attempt log"
 msgid_plural "Attempt logs"
 msgstr[0] "Registro de intentos"
 msgstr[1] "Registros de intentos"
 
-#: inc/config.class.php
+#: src/Config.php
 msgid ""
 "The account lockout threshold must be greater than the IP lockout threshold."
 " It has been adjusted automatically."
@@ -104,73 +104,73 @@ msgstr ""
 "El umbral de bloqueo de cuenta debe ser mayor que el umbral de bloqueo por "
 "IP. Se ha ajustado automáticamente."
 
-#: inc/config.class.php
+#: src/Config.php
 #, python-format
 msgid "Ignored invalid IP entry: %s"
 msgstr "Entrada de IP no válida ignorada: %s"
 
-#: inc/dashboardgrid.class.php
+#: src/DashboardGrid.php
 msgid "More Security"
 msgstr "More Security"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "Private"
 msgstr "Privada"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "Reserved"
 msgstr "Reservada"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "Unknown"
 msgstr "Desconocido"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "private/local address"
 msgstr "dirección privada/local"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "database unavailable"
 msgstr "base de datos no disponible"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid ""
 "GeoIP lookup failed for IP %1$s (%2$s) — login allowed through (fail-open)"
 msgstr ""
 "Falló la consulta GeoIP para la IP %1$s (%2$s): inicio de sesión permitido "
 "(fail-open)"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "Download the monthly DB-IP Lite country database"
 msgstr "Descargar la base de datos mensual de países DB-IP Lite"
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "GeoIP database updated successfully."
 msgstr "Base de datos GeoIP actualizada correctamente."
 
-#: inc/geoip.class.php
+#: src/Geoip.php
 msgid "GeoIP database update failed."
 msgstr "Falló la actualización de la base de datos GeoIP."
 
-#: inc/retention.class.php
+#: src/Retention.php
 msgid "Purge security logs based on retention policy"
 msgstr "Purgar los registros de seguridad según la política de retención"
 
-#: inc/retention.class.php
+#: src/Retention.php
 msgid "Retention period (days)"
 msgstr "Periodo de retención (días)"
 
-#: inc/retention.class.php
+#: src/Retention.php
 msgid "Purge old login and password reset attempt records"
 msgstr ""
 "Purgar registros antiguos de intentos de inicio de sesión y de "
 "restablecimiento de contraseña"
 
-#: inc/whitelist.class.php
+#: src/Whitelist.php
 msgid "Invalid IP address or CIDR range."
 msgstr "Dirección IP o rango CIDR no válido."
 
-#: inc/whitelist.class.php
+#: src/Whitelist.php
 msgid "Whitelist"
 msgid_plural "Whitelists"
 msgstr[0] "Lista blanca"
